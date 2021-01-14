@@ -1,0 +1,9 @@
+[package]
+name = "pvalve"
+version = "0.1.0"
+authors = ["Jordan Yelloz <jordan@yelloz.me>"]
+edition = "2018"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+leaky-bucket = "0.10"
