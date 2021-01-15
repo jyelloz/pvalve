@@ -63,11 +63,13 @@ fn get_bucket(rate: usize) -> LeakyBucket {
 async fn transfer<I: AsyncRead + Unpin, O: AsyncWrite + Unpin>(
     mut rx: I,
     mut tx: O,
+    buffer_length: usize,
     control: Receiver<usize>,
 ) -> io::Result<()> {
 
     let mut bucket = get_bucket(*control.borrow());
-    let mut buf: [u8; 1024] = [0; 1024];
+    let mut buf = vec![0u8; buffer_length];
+    let buf = &mut buf.as_mut_slice()[0..buffer_length];
     loop {
 
         let new_rate = *control.borrow();
@@ -75,7 +77,7 @@ async fn transfer<I: AsyncRead + Unpin, O: AsyncWrite + Unpin>(
             bucket = get_bucket(new_rate);
         }
 
-        let bytes_read = rx.read(&mut buf).await?;
+        let bytes_read = rx.read(buf).await?;
         if bytes_read == 0 {
             break;
         }
@@ -92,6 +94,7 @@ async fn transfer<I: AsyncRead + Unpin, O: AsyncWrite + Unpin>(
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    let buffer_length = 1 << 20;
     let (tx, rx) = channel(1024usize);
     let watch = tokio::spawn(
         watch_control_file("control", tx)
@@ -100,6 +103,7 @@ async fn main() -> io::Result<()> {
         transfer(
             io::stdin(),
             io::stdout(),
+            buffer_length,
             rx,
         )
     ).await??;
