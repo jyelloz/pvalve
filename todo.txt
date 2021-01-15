@@ -1,0 +1,8 @@
+Decide whether async I/O framework is even necessary.
+Use a FIFO file instead of a normal file for controlling bandwidth.
+Add line-oriented mode.
+Define command-line interface.
+Add a man page.
+Add a readme.
+Add unit tests.
+Determine if buffering of I/O is done correctly.
