@@ -8,3 +8,4 @@ license = "MIT"
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 leaky-bucket = "0.10"
+governor = "0.3"
