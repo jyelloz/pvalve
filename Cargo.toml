@@ -6,6 +6,19 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
-leaky-bucket = "0.10"
+tokio = { version = "1", features = ["full"] }
 governor = "0.3"
+nonzero_ext = "0.2.0"
+crossterm = "*"
+bytes = "1.0.1"
+futures-timer = "3.0.2"
+pin-project-lite = "0.2.4"
+[dependencies.tokio-util]
+version = "0.6"
+features = ["compat", "codec"]
+[dependencies.futures]
+version = "0.3"
+features = ["std", "async-await", "executor", "io-compat"]
+[dependencies.tui]
+version = "0.14"
+features = ["crossterm"]
