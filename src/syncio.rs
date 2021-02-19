@@ -20,20 +20,16 @@ use governor::{
     },
 };
 
-const LF: u8 = 0x0A;
+const NUL: u8 = 0x0;
+const LF: u8 = 0xA;
 
 type DirectRateLimiter<C> = RateLimiter<NotKeyed, InMemoryState, C>;
 
-fn find_newline(buf: &[u8]) -> Option<usize> {
-    buf.iter().position(|byte| LF == *byte)
+fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
+    buf.iter().position(|byte| delimiter == *byte)
 }
 
 pub struct RateLimitedWriter<W> {
-    inner: W,
-    limiter: DirectRateLimiter<DefaultClock>,
-}
-
-pub struct RateLimitedLineWriter<W> {
     inner: W,
     limiter: DirectRateLimiter<DefaultClock>,
 }
@@ -70,9 +66,39 @@ impl <W> Write for RateLimitedWriter<W> where W: Write {
     }
 }
 
+pub struct RateLimitedLineWriter<W> {
+    inner: W,
+    limiter: DirectRateLimiter<DefaultClock>,
+    delimiter: u8,
+}
+
+impl <W> RateLimitedLineWriter<W> {
+
+    pub fn new_linefeed_separated(inner: W, rate: NonZeroU32) -> Self {
+        Self {
+            inner,
+            limiter: RateLimiter::direct(Quota::per_second(rate)),
+            delimiter: LF,
+        }
+    }
+
+    pub fn new_null_separated(inner: W, rate: NonZeroU32) -> Self {
+        Self {
+            inner,
+            limiter: RateLimiter::direct(Quota::per_second(rate)),
+            delimiter: NUL,
+        }
+    }
+
+    pub fn set_rate(&mut self, rate: NonZeroU32) {
+        self.limiter = RateLimiter::direct(Quota::per_second(rate));
+    }
+
+}
+
 impl <W> Write for RateLimitedLineWriter<W> where W: Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let newline_position = find_newline(buf);
+        let newline_position = find_newline(buf, self.delimiter);
         if let Some(end) = newline_position {
             wait_for_line(&self.limiter);
             self.inner.write(&buf[..end + 1])
