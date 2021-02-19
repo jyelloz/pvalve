@@ -98,8 +98,7 @@ impl <W> RateLimitedLineWriter<W> {
 
 impl <W> Write for RateLimitedLineWriter<W> where W: Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let newline_position = find_newline(buf, self.delimiter);
-        if let Some(end) = newline_position {
+        if let Some(end) = find_newline(buf, self.delimiter) {
             wait_for_line(&self.limiter);
             self.inner.write(&buf[..end + 1])
         } else {
@@ -149,8 +148,9 @@ fn wait_for_bytes(
 
 fn wait_for_line(limiter: &DirectRateLimiter<DefaultClock>) {
     let clock = DefaultClock::default();
+    let now = clock.now();
     while let Err(not_until) = limiter.check() {
-        let delay = not_until.wait_time_from(clock.now());
+        let delay = not_until.wait_time_from(now);
         sleep(delay);
     }
 }
