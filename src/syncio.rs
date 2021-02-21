@@ -2,9 +2,12 @@ use std::{
     io::{
         Result,
         Write,
+        Error,
+        ErrorKind,
     },
     num::NonZeroU32,
     thread::sleep,
+    sync::mpsc::Receiver,
 };
 use governor::{
     Quota,
@@ -20,6 +23,8 @@ use governor::{
     },
 };
 
+use crate::ipc::Message;
+
 const NUL: u8 = 0x0;
 const LF: u8 = 0xA;
 
@@ -32,6 +37,8 @@ fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
 pub struct RateLimitedWriter<W> {
     inner: W,
     limiter: DirectRateLimiter<DefaultClock>,
+    rate: NonZeroU32,
+    updates: Option<Receiver<Message>>,
 }
 
 impl <W> RateLimitedWriter<W> {
@@ -39,23 +46,65 @@ impl <W> RateLimitedWriter<W> {
         Self {
             inner: writer,
             limiter: RateLimiter::direct(Quota::per_second(rate)),
+            rate,
+            updates: None,
         }
     }
 
-    pub fn set_rate(&mut self, rate: NonZeroU32) {
-        self.limiter = RateLimiter::direct(Quota::per_second(rate));
+    pub fn writer_with_rate_and_updates(
+        writer: W,
+        rate: NonZeroU32,
+        rate_updates: Receiver<Message>,
+    ) -> Self {
+        Self {
+            inner: writer,
+            limiter: RateLimiter::direct(Quota::per_second(rate)),
+            rate,
+            updates: Some(rate_updates),
+        }
     }
+
+    pub fn get_rate(&self) -> NonZeroU32 {
+        self.rate
+    }
+
+    fn set_rate(&mut self, rate: NonZeroU32) {
+        eprintln!("updating rate to {}", rate);
+        self.limiter = RateLimiter::direct(Quota::per_second(rate));
+        self.rate = rate;
+    }
+
+    fn update(&mut self) ->  bool {
+        if let Some(updates) = &mut self.updates {
+            if let Ok(message) = updates.try_recv() {
+                match message {
+                    Message::UpdateRate(rate) => {
+                        self.set_rate(rate);
+                        return false;
+                    }
+                    Message::Interrupted => {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
 }
 
 impl <W> Write for RateLimitedWriter<W> where W: Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        if self.update() {
+            return Err(Error::new(ErrorKind::BrokenPipe, "Process interrupted"));
+        }
         let len = buf.len();
         let end = wait_for_bytes(
             &self.limiter,
             len as u32,
         ) as usize;
         let bytes_written = self.inner.write(&buf[..end])?;
-        if end < len {
+        if bytes_written < len {
             self.flush()?;
         }
         Ok(bytes_written)

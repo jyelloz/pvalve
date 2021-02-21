@@ -8,11 +8,12 @@ license = "MIT"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 governor = "0.3"
-nonzero_ext = "0.2.0"
+nonzero_ext = "0.2"
 crossterm = "*"
-bytes = "1.0.1"
-futures-timer = "3.0.2"
-pin-project-lite = "0.2.4"
+bytes = "1.0"
+futures-timer = "3.0"
+pin-project-lite = "0.2"
+anyhow = "1"
 [dependencies.tokio-util]
 version = "0.6"
 features = ["compat", "codec"]
