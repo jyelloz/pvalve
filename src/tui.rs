@@ -44,6 +44,8 @@ fn checked_add(value: NonZeroU32, increment: u32) -> NonZeroU32 {
     value
         .get()
         .checked_add(increment)
+        .map(|n| n - (n % increment))
+        .map(|n| 1.max(n))
         .and_then(NonZeroU32::new)
         .unwrap_or(value)
 }
@@ -52,6 +54,8 @@ fn checked_sub(value: NonZeroU32, increment: u32) -> NonZeroU32 {
     value
         .get()
         .checked_sub(increment)
+        .map(|n| n - (n % increment))
+        .map(|n| 1.max(n))
         .and_then(NonZeroU32::new)
         .unwrap_or(value)
 }
