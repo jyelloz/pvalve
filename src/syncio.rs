@@ -8,9 +8,11 @@ use std::{
     num::NonZeroU32,
     sync::mpsc::Receiver,
     thread::sleep,
+    time::{Duration, Instant},
 };
 
-use crate::ipc::Message;
+use crate::ipc::{Message, ProgressMessage};
+use crate::memslot::WriteHalf;
 
 const NUL: u8 = 0x0;
 const LF: u8 = 0xA;
@@ -21,11 +23,37 @@ fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
     buf.iter().position(|byte| delimiter == *byte)
 }
 
+struct Progress {
+    bytes_transferred: usize,
+    time_started: Instant,
+}
+
+impl Progress {
+    fn duration(&self) -> Duration {
+        Instant::now().duration_since(self.time_started)
+    }
+    fn add(&mut self, bytes: usize) -> usize {
+        self.bytes_transferred += bytes;
+        self.bytes_transferred
+    }
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self {
+            bytes_transferred: 0,
+            time_started: Instant::now(),
+        }
+    }
+}
+
 pub struct RateLimitedWriter<W> {
     inner: W,
     limiter: DirectRateLimiter<DefaultClock>,
     rate: NonZeroU32,
-    updates: Option<Receiver<Message>>,
+    rx: Option<Receiver<Message>>,
+    tx: Option<WriteHalf<ProgressMessage>>,
+    progress: Progress,
 }
 
 impl<W> RateLimitedWriter<W> {
@@ -34,7 +62,9 @@ impl<W> RateLimitedWriter<W> {
             inner: writer,
             limiter: RateLimiter::direct(Quota::per_second(rate)),
             rate,
-            updates: None,
+            rx: None,
+            tx: None,
+            progress: Default::default(),
         }
     }
 
@@ -42,12 +72,15 @@ impl<W> RateLimitedWriter<W> {
         writer: W,
         rate: NonZeroU32,
         rate_updates: Receiver<Message>,
+        progress_updates: WriteHalf<ProgressMessage>,
     ) -> Self {
         Self {
             inner: writer,
             limiter: RateLimiter::direct(Quota::per_second(rate)),
             rate,
-            updates: Some(rate_updates),
+            rx: Some(rate_updates),
+            tx: Some(progress_updates),
+            progress: Default::default(),
         }
     }
 
@@ -61,7 +94,7 @@ impl<W> RateLimitedWriter<W> {
     }
 
     fn update(&mut self) -> bool {
-        if let Some(updates) = &mut self.updates {
+        if let Some(updates) = &mut self.rx {
             if let Ok(message) = updates.try_recv() {
                 match message {
                     Message::UpdateRate(rate) => {
@@ -75,6 +108,14 @@ impl<W> RateLimitedWriter<W> {
             }
         }
         return false;
+    }
+
+    fn update_progress(&mut self, bytes_transferred: usize) {
+        if let Some(tx) = &mut self.tx {
+            let bytes_transferred = self.progress.add(bytes_transferred);
+            let duration = self.progress.duration();
+            tx.set(ProgressMessage::Transfer(bytes_transferred, duration));
+        }
     }
 }
 
@@ -91,11 +132,12 @@ where
         }
         let len = buf.len();
         let end = wait_for_bytes(&self.limiter, len as u32) as usize;
-        let bytes_written = self.inner.write(&buf[..end])?;
-        if bytes_written < len {
+        let bytes_transferred = self.inner.write(&buf[..end])?;
+        if bytes_transferred < len {
             self.flush()?;
         }
-        Ok(bytes_written)
+        self.update_progress(bytes_transferred);
+        Ok(bytes_transferred)
     }
 
     fn flush(&mut self) -> Result<()> {
