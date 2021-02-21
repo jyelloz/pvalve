@@ -1,34 +1,18 @@
-use std::{
-    iter,
-    sync::mpsc::Sender,
-    time::Duration,
-    num::NonZeroU32,
-    fs::OpenOptions,
-};
 use nonzero_ext::nonzero;
+use std::{
+    fs::OpenOptions, iter, num::NonZeroU32, sync::mpsc::Sender, time::Duration,
+};
 
 use tui::{
-    Terminal,
-    Frame,
+    backend::{Backend, CrosstermBackend},
     layout::Rect,
-    backend::{
-        Backend,
-        CrosstermBackend,
-    },
     widgets::Paragraph,
+    Frame, Terminal,
 };
 
 use crossterm::{
-    execute,
-    event::{
-        poll,
-        read,
-        Event as InputEvent,
-        KeyEvent,
-        KeyCode,
-        KeyModifiers,
-    },
-    terminal,
+    event::{poll, read, Event as InputEvent, KeyCode, KeyEvent, KeyModifiers},
+    execute, terminal,
 };
 
 use crate::ipc::Message;
@@ -50,38 +34,31 @@ impl Iterator for Events {
                 let event = read().unwrap();
                 Some(Event::Input(event))
             }
-            Ok(false) => {
-                Some(Event::Tick)
-            }
-            _ => {
-                panic!("failed to iterate input events");
-            }
+            Ok(false) => Some(Event::Tick),
+            _ => panic!("failed to iterate input events"),
         }
     }
-
 }
 
 fn checked_add(value: NonZeroU32, increment: u32) -> NonZeroU32 {
-    value.get()
+    value
+        .get()
         .checked_add(increment)
         .and_then(NonZeroU32::new)
         .unwrap_or(value)
 }
 
 fn checked_sub(value: NonZeroU32, increment: u32) -> NonZeroU32 {
-    value.get()
+    value
+        .get()
         .checked_sub(increment)
         .and_then(NonZeroU32::new)
         .unwrap_or(value)
 }
 
-
 pub fn user_interface(tx: Sender<Message>) -> anyhow::Result<()> {
     let mut rate = nonzero!(1u32);
-    let mut tty = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")?;
+    let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
     terminal::enable_raw_mode()?;
     execute!(tty, terminal::EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(tty);
@@ -90,27 +67,28 @@ pub fn user_interface(tx: Sender<Message>) -> anyhow::Result<()> {
     terminal.clear()?;
     for event in events {
         match event {
-            Event::Input(
-                InputEvent::Key(KeyEvent { code: KeyCode::Left, modifiers: _})
-            ) => {
+            Event::Input(InputEvent::Key(KeyEvent {
+                code: KeyCode::Left,
+                modifiers: _,
+            })) => {
                 rate = checked_sub(rate, 10);
                 tx.send(Message::UpdateRate(rate))?;
-            },
-            Event::Input(
-                InputEvent::Key(KeyEvent { code: KeyCode::Right, modifiers: _})
-            ) => {
+            }
+            Event::Input(InputEvent::Key(KeyEvent {
+                code: KeyCode::Right,
+                modifiers: _,
+            })) => {
                 rate = checked_add(rate, 10);
                 tx.send(Message::UpdateRate(rate))?;
-            },
-            Event::Input(
-                InputEvent::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL })
-            ) => {
+            }
+            Event::Input(InputEvent::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+            })) => {
                 tx.send(Message::Interrupted)?;
                 break;
-            },
-            _ => {
-
-            },
+            }
+            _ => {}
         }
         terminal.draw(|f| draw(f, rate.clone()))?;
     }
@@ -128,7 +106,6 @@ pub fn cleanup() -> anyhow::Result<()> {
 }
 
 fn draw<B: Backend>(f: &mut Frame<B>, rate: NonZeroU32) {
-
     let para = Paragraph::new(format!("copying at {} bytes/sec", rate));
 
     let size = f.size();
@@ -136,5 +113,4 @@ fn draw<B: Backend>(f: &mut Frame<B>, rate: NonZeroU32) {
     let row = Rect::new(0, 0, size.width, 1);
 
     f.render_widget(para, row);
-
 }
