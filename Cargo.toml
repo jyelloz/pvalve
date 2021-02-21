@@ -9,6 +9,7 @@ license = "MIT"
 nonzero_ext = "0.2"
 crossterm = "0.19"
 anyhow = "1"
+thiserror = "1"
 [dependencies.governor]
 version = "0.3"
 features = []
