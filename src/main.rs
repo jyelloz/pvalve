@@ -2,12 +2,7 @@ use std::thread;
 use std::io::{
     self,
     copy,
-    Result,
-    Stdin,
-    Stdout,
 };
-use std::sync::mpsc::Sender;
-use std::num::NonZeroU32;
 use nonzero_ext::nonzero;
 
 use pvalve::{

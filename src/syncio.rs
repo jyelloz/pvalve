@@ -69,7 +69,6 @@ impl <W> RateLimitedWriter<W> {
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
-        eprintln!("updating rate to {}", rate);
         self.limiter = RateLimiter::direct(Quota::per_second(rate));
         self.rate = rate;
     }
@@ -170,7 +169,6 @@ fn wait_for_bytes(
         let now = clock.now();
         if let Err(not_until) = limiter.check() {
             let delay = not_until.wait_time_from(now);
-            eprintln!("waiting {:?} for {} bytes", delay, goal);
             sleep(delay);
             return wait_for_bytes(limiter, 1);
         } else {
