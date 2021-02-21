@@ -7,27 +7,37 @@ use std::{
 
 use crossterm::tty::IsTty;
 use pvalve::{
+    ipc::ProgressMessage,
     syncio::RateLimitedWriter,
-    tui::{cleanup, user_interface},
+    tui::{Cleanup, UserInterface},
 };
 
 fn main() -> anyhow::Result<()> {
     let mut stdin = io::stdin();
     let stdout = io::stdout();
-    let (tx, rx) = channel();
+    let (state_tx, state_rx) = channel();
+    let (control_tx, control_rx) = channel();
     let ui = if !stdin.is_tty() && !stdout.is_tty() {
-        Some(thread::spawn(move || user_interface(tx)))
+        let ui = UserInterface::new(control_tx, state_rx)?;
+        Some(thread::spawn(move || ui.run()))
     } else {
         None
     };
     let mut stdout = RateLimitedWriter::writer_with_rate_and_updates(
         stdout,
         nonzero!(1u32),
-        rx,
+        control_rx,
+        state_tx.clone(),
     );
     let copy_result = copy(&mut stdin, &mut stdout);
-    if ui.is_some() {
-        cleanup()?;
+    state_tx.send(ProgressMessage::Interrupted)?;
+    if let Some(ui) = ui {
+        match ui.join() {
+            Err(_) | Ok(Err(_)) => {
+                Cleanup();
+            }
+            _ => {}
+        }
     }
     copy_result?;
     Ok(())
