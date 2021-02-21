@@ -1,6 +1,10 @@
 use nonzero_ext::nonzero;
 use std::{
-    fs::OpenOptions, iter, num::NonZeroU32, sync::mpsc::Sender, time::Duration,
+    fs::{File, OpenOptions},
+    io, iter,
+    num::NonZeroU32,
+    sync::mpsc::{Receiver, SendError, Sender},
+    time::Duration,
 };
 
 use tui::{
@@ -15,7 +19,21 @@ use crossterm::{
     execute, terminal,
 };
 
-use crate::ipc::Message;
+use thiserror::Error;
+
+use crate::ipc::{Message, ProgressMessage};
+
+#[derive(Debug, Error)]
+pub enum UserInterfaceError {
+    #[error("I/O error talking to terminal")]
+    IO(#[from] io::Error),
+    #[error("I/O error talking to terminal")]
+    Crossterm(#[from] crossterm::ErrorKind),
+    #[error("Failed to send control message to stream.")]
+    IPC(#[from] SendError<Message>),
+}
+
+type Result<T> = std::result::Result<T, UserInterfaceError>;
 
 #[derive(Debug)]
 enum Event {
@@ -35,7 +53,7 @@ impl Iterator for Events {
                 Some(Event::Input(event))
             }
             Ok(false) => Some(Event::Tick),
-            _ => panic!("failed to iterate input events"),
+            _ => unreachable!("failed to iterate input events"),
         }
     }
 }
@@ -60,61 +78,97 @@ fn checked_sub(value: NonZeroU32, increment: u32) -> NonZeroU32 {
         .unwrap_or(value)
 }
 
-pub fn user_interface(tx: Sender<Message>) -> anyhow::Result<()> {
-    let mut rate = nonzero!(1u32);
-    let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-    terminal::enable_raw_mode()?;
-    execute!(tty, terminal::EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(tty);
-    let mut terminal = Terminal::new(backend)?;
-    let events = iter::once(Event::Tick).chain(Events);
-    terminal.clear()?;
-    for event in events {
-        match event {
-            Event::Input(InputEvent::Key(KeyEvent {
-                code: KeyCode::Left,
-                modifiers: _,
-            })) => {
-                rate = checked_sub(rate, 10);
-                tx.send(Message::UpdateRate(rate))?;
+type CrossTerminal = Terminal<CrosstermBackend<File>>;
+
+pub struct UserInterface {
+    terminal: CrossTerminal,
+    tx: Sender<Message>,
+    rx: Receiver<ProgressMessage>,
+}
+
+pub struct Cleanup();
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if let Ok(mut tty) =
+            OpenOptions::new().read(true).write(true).open("/dev/tty")
+        {
+            execute!(tty, terminal::LeaveAlternateScreen)
+                .expect("failed to leave alternate screen");
+            terminal::disable_raw_mode().expect("failed to disable raw mode");
+        }
+    }
+}
+
+impl UserInterface {
+    pub fn new(
+        tx: Sender<Message>,
+        rx: Receiver<ProgressMessage>,
+    ) -> Result<Self> {
+        let backend = UserInterface::initialize_backend()?;
+        let terminal = Terminal::new(backend)?;
+        Ok(Self { terminal, rx, tx })
+    }
+    fn initialize_backend() -> Result<CrosstermBackend<File>> {
+        let mut tty =
+            OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+        terminal::enable_raw_mode()?;
+        execute!(tty, terminal::EnterAlternateScreen)?;
+        Ok(CrosstermBackend::new(tty))
+    }
+    pub fn run(mut self) -> Result<Cleanup> {
+        let mut rate = nonzero!(1u32);
+        let events = iter::once(Event::Tick).chain(Events);
+        let terminal = &mut self.terminal;
+        let tx = &mut self.tx;
+        let rx = &mut self.rx;
+        terminal.clear()?;
+        for event in events {
+            match event {
+                Event::Input(InputEvent::Key(KeyEvent {
+                    code: KeyCode::Left,
+                    modifiers: _,
+                })) => {
+                    rate = checked_sub(rate, 10);
+                    tx.send(Message::UpdateRate(rate))?;
+                }
+                Event::Input(InputEvent::Key(KeyEvent {
+                    code: KeyCode::Right,
+                    modifiers: _,
+                })) => {
+                    rate = checked_add(rate, 10);
+                    tx.send(Message::UpdateRate(rate))?;
+                }
+                Event::Input(InputEvent::Key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                })) => {
+                    tx.send(Message::Interrupted)?;
+                    break;
+                }
+                _ => {}
             }
-            Event::Input(InputEvent::Key(KeyEvent {
-                code: KeyCode::Right,
-                modifiers: _,
-            })) => {
-                rate = checked_add(rate, 10);
-                tx.send(Message::UpdateRate(rate))?;
-            }
-            Event::Input(InputEvent::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-            })) => {
-                tx.send(Message::Interrupted)?;
+            terminal.draw(|f| Self::draw(f, rate.clone()))?;
+            if let Ok(ProgressMessage::Interrupted) = rx.try_recv() {
                 break;
             }
-            _ => {}
         }
-        terminal.draw(|f| draw(f, rate.clone()))?;
+        Ok(Cleanup())
     }
-    Ok(())
+
+    fn draw<B: Backend>(f: &mut Frame<B>, rate: NonZeroU32) {
+        let para = Paragraph::new(format!("copying at {} bytes/sec", rate));
+
+        let size = f.size();
+
+        let row = Rect::new(0, 0, size.width, 1);
+
+        f.render_widget(para, row);
+    }
 }
 
-pub fn cleanup() -> anyhow::Result<()> {
-    let mut tty = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")?;
-    execute!(tty, terminal::LeaveAlternateScreen)?;
-    terminal::disable_raw_mode()?;
-    Ok(())
-}
-
-fn draw<B: Backend>(f: &mut Frame<B>, rate: NonZeroU32) {
-    let para = Paragraph::new(format!("copying at {} bytes/sec", rate));
-
-    let size = f.size();
-
-    let row = Rect::new(0, 0, size.width, 1);
-
-    f.render_widget(para, row);
+impl Drop for UserInterface {
+    fn drop(&mut self) {
+        Cleanup();
+    }
 }
