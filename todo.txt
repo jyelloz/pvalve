@@ -1,4 +1,4 @@
-Decide whether async I/O framework is even necessary.
+x Decide whether async I/O framework is even necessary. (No, it is not).
 Use a FIFO file instead of a normal file for controlling bandwidth.
 Add line-oriented mode.
 Define command-line interface.
