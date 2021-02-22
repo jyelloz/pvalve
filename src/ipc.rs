@@ -8,6 +8,7 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum ProgressMessage {
+    Initial,
     Transfer(usize, Duration),
     Interrupted,
 }
