@@ -6,4 +6,5 @@ Add a man page.
 Add a readme.
 Add unit tests.
 Add a live control TUI.
+Reduce number of backoff steps to reach 1 credit to a fixed number.
 x Determine if buffering of I/O is done correctly.
