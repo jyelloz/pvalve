@@ -5,4 +5,5 @@ Define command-line interface.
 Add a man page.
 Add a readme.
 Add unit tests.
-Determine if buffering of I/O is done correctly.
+Add a live control TUI.
+x Determine if buffering of I/O is done correctly.
