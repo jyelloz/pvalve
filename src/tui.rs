@@ -3,7 +3,7 @@ use std::{
     fs::{File, OpenOptions},
     io, iter,
     num::NonZeroU32,
-    sync::mpsc::{Receiver, SendError, Sender},
+    sync::mpsc::{SendError, Sender},
     time::Duration,
 };
 
@@ -21,7 +21,10 @@ use crossterm::{
 
 use thiserror::Error;
 
-use crate::ipc::{Message, ProgressMessage};
+use crate::{
+    ipc::{Message, ProgressMessage},
+    memslot::ReadHalf,
+};
 
 #[derive(Debug, Error)]
 pub enum UserInterfaceError {
@@ -83,7 +86,7 @@ type CrossTerminal = Terminal<CrosstermBackend<File>>;
 pub struct UserInterface {
     terminal: CrossTerminal,
     tx: Sender<Message>,
-    rx: Receiver<ProgressMessage>,
+    rx: ReadHalf<ProgressMessage>,
 }
 
 pub struct Cleanup();
@@ -103,7 +106,7 @@ impl Drop for Cleanup {
 impl UserInterface {
     pub fn new(
         tx: Sender<Message>,
-        rx: Receiver<ProgressMessage>,
+        rx: ReadHalf<ProgressMessage>,
     ) -> Result<Self> {
         let backend = UserInterface::initialize_backend()?;
         let terminal = Terminal::new(backend)?;
@@ -122,6 +125,10 @@ impl UserInterface {
         let terminal = &mut self.terminal;
         let tx = &mut self.tx;
         let rx = &mut self.rx;
+
+        let mut bytes_transferred = 0;
+        let mut duration = Duration::from_secs(0);
+
         terminal.clear()?;
         for event in events {
             match event {
@@ -148,16 +155,33 @@ impl UserInterface {
                 }
                 _ => {}
             }
-            terminal.draw(|f| Self::draw(f, rate.clone()))?;
-            if let Ok(ProgressMessage::Interrupted) = rx.try_recv() {
-                break;
+            match rx.get() {
+                ProgressMessage::Interrupted => {
+                    break;
+                }
+                ProgressMessage::Transfer(bytes, age) => {
+                    bytes_transferred = bytes;
+                    duration = age;
+                }
+                _ => {}
             }
+            terminal.draw(|f| {
+                Self::draw(f, rate.clone(), bytes_transferred, duration)
+            })?;
         }
         Ok(Cleanup())
     }
 
-    fn draw<B: Backend>(f: &mut Frame<B>, rate: NonZeroU32) {
-        let para = Paragraph::new(format!("copying at {} bytes/sec", rate));
+    fn draw<B: Backend>(
+        f: &mut Frame<B>,
+        rate: NonZeroU32,
+        bytes_transferred: usize,
+        duration: Duration,
+    ) {
+        let para = Paragraph::new(format!(
+            "{:?} {} copying at {} bytes/sec",
+            duration, bytes_transferred, rate,
+        ));
 
         let size = f.size();
 
