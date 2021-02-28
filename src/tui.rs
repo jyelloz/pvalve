@@ -119,8 +119,7 @@ impl UserInterface {
         execute!(tty, terminal::EnterAlternateScreen)?;
         Ok(CrosstermBackend::new(tty))
     }
-    pub fn run(mut self) -> Result<Cleanup> {
-        let mut rate = nonzero!(1u32);
+    pub fn run(mut self, mut rate: NonZeroU32) -> Result<Cleanup> {
         let events = iter::once(Event::Tick).chain(Events);
         let terminal = &mut self.terminal;
         let tx = &mut self.tx;

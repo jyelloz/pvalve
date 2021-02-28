@@ -11,9 +11,15 @@ use pvalve::{
     memslot::Memslot,
     syncio::RateLimitedWriter,
     tui::{Cleanup, UserInterface},
+    cli::Opts,
 };
 
 fn main() -> anyhow::Result<()> {
+
+    let invo = Opts::parse_process_args();
+
+    let rate = invo.speed.map(|s| s.0).unwrap_or(nonzero!(1u32));
+
     let mut stdin = io::stdin();
     let stdout = io::stdout();
     let (mut state_tx, state_rx) =
@@ -21,13 +27,13 @@ fn main() -> anyhow::Result<()> {
     let (control_tx, control_rx) = channel();
     let ui = if !stdin.is_tty() && !stdout.is_tty() {
         let ui = UserInterface::new(control_tx, state_rx)?;
-        Some(thread::spawn(move || ui.run()))
+        Some(thread::spawn(move || ui.run(rate)))
     } else {
         None
     };
     let mut stdout = RateLimitedWriter::writer_with_rate_and_updates(
         stdout,
-        nonzero!(1u32),
+        rate,
         control_rx,
         state_tx.clone(),
     );
