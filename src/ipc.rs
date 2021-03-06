@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, time::Duration};
+use std::num::NonZeroU32;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -9,6 +9,5 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum ProgressMessage {
     Initial,
-    Transfer(usize, Duration),
     Interrupted,
 }
