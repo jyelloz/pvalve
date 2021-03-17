@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use nonzero_ext::nonzero;
+
 use crate::ipc::{Message, ProgressMessage};
 use crate::memslot::WriteHalf;
 
@@ -89,7 +91,9 @@ impl<W> RateLimitedWriter<W> {
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
-        self.limiter = RateLimiter::direct(Quota::per_second(rate));
+        self.limiter = RateLimiter::direct(
+            Quota::per_second(rate).allow_burst(nonzero!(1u32))
+        );
         self.rate = rate;
     }
 
