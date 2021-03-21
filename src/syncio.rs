@@ -135,7 +135,7 @@ where
             ));
         }
         let len = buf.len();
-        let end = wait_for_bytes(&self.limiter, len as u32) as usize;
+        let end = wait_for_at_most(&self.limiter, len as u32) as usize;
         let bytes_transferred = self.inner.write(&buf[..end])?;
         if bytes_transferred < len {
             self.flush()?;
@@ -183,7 +183,7 @@ where
 {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         if let Some(end) = find_newline(buf, self.delimiter) {
-            wait_for_line(&self.limiter);
+            wait_for_one(&self.limiter);
             self.inner.write(&buf[..end + 1])
         } else {
             self.inner.write(buf)
@@ -195,17 +195,16 @@ where
     }
 }
 
-fn wait_for_bytes(limiter: &DirectRateLimiter<DefaultClock>, goal: u32) -> u32 {
+fn wait_for_at_most(limiter: &DirectRateLimiter<DefaultClock>, goal: u32) -> u32 {
     if goal <= 2 {
         let clock = DefaultClock::default();
         let now = clock.now();
         if let Err(not_until) = limiter.check() {
             let delay = not_until.wait_time_from(now);
             sleep(delay);
-            return wait_for_bytes(limiter, 1);
-        } else {
-            return 1;
+            wait_for_one(limiter);
         }
+        return 1;
     }
 
     let goal_value = NonZeroU32::new(goal);
@@ -217,15 +216,15 @@ fn wait_for_bytes(limiter: &DirectRateLimiter<DefaultClock>, goal: u32) -> u32 {
     match limiter.check_n(goal_value.unwrap()) {
         Ok(_) => goal,
         Err(NegativeMultiDecision::InsufficientCapacity(part)) => {
-            wait_for_bytes(limiter, part)
+            wait_for_at_most(limiter, part)
         }
         Err(NegativeMultiDecision::BatchNonConforming(_, _)) => {
-            wait_for_bytes(limiter, goal / 2)
+            wait_for_at_most(limiter, goal / 2)
         }
     }
 }
 
-fn wait_for_line(limiter: &DirectRateLimiter<DefaultClock>) {
+fn wait_for_one(limiter: &DirectRateLimiter<DefaultClock>) {
     let clock = DefaultClock::default();
     let now = clock.now();
     while let Err(not_until) = limiter.check() {
