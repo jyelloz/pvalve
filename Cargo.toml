@@ -6,11 +6,16 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
+lazy_static = "*"
+config = "*"
 nonzero_ext = "0.2"
 crossterm = "0.19"
 anyhow = "1"
 thiserror = "1"
+chrono = "0.4"
+size_format = "1"
 gumdrop = "0.8"
+sum-queue = "0.1"
 [dependencies.governor]
 version = "0.3"
 features = []
