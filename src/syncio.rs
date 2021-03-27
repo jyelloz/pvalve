@@ -19,6 +19,7 @@ use std::{
 
 use crate::{
     ipc::Message,
+    progress::ProgressCounter,
     config::Config,
 };
 
@@ -44,8 +45,8 @@ pub struct ProgressWriter<W> {
 }
 
 impl <W> ProgressWriter<W> {
-    pub fn bytes_transferred(&self) -> Arc<AtomicUsize> {
-        self.bytes_transferred.clone()
+    pub fn bytes_transferred(&self) -> ProgressCounter {
+        ProgressCounter::new(self.bytes_transferred.clone())
     }
 }
 
