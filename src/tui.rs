@@ -1,10 +1,16 @@
-use nonzero_ext::nonzero;
 use std::{
     fs::{File, OpenOptions},
     io, iter,
     num::NonZeroU32,
-    sync::mpsc::{SendError, Sender},
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{SendError, Sender},
+    },
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use tui::{
@@ -19,11 +25,15 @@ use crossterm::{
     execute, terminal,
 };
 
+use size_format::SizeFormatterBinary;
+
 use thiserror::Error;
 
 use crate::{
+    config::Config,
     ipc::{Message, ProgressMessage},
     memslot::ReadHalf,
+    progress::ProgressView,
 };
 
 #[derive(Debug, Error)]
@@ -87,6 +97,7 @@ pub struct UserInterface {
     terminal: CrossTerminal,
     tx: Sender<Message>,
     rx: ReadHalf<ProgressMessage>,
+    progress: Arc<AtomicUsize>,
 }
 
 pub struct Cleanup();
@@ -107,10 +118,16 @@ impl UserInterface {
     pub fn new(
         tx: Sender<Message>,
         rx: ReadHalf<ProgressMessage>,
+        progress: Arc<AtomicUsize>,
     ) -> Result<Self> {
-        let backend = UserInterface::initialize_backend()?;
+        let backend = Self::initialize_backend()?;
         let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal, rx, tx })
+        Ok(Self {
+            terminal,
+            rx,
+            tx,
+            progress,
+        })
     }
     fn initialize_backend() -> Result<CrosstermBackend<File>> {
         let mut tty =
@@ -119,75 +136,114 @@ impl UserInterface {
         execute!(tty, terminal::EnterAlternateScreen)?;
         Ok(CrosstermBackend::new(tty))
     }
-    pub fn run(mut self, mut rate: NonZeroU32) -> Result<Cleanup> {
+    pub fn run(mut self, start_time: Instant) -> Result<Cleanup> {
         let events = iter::once(Event::Tick).chain(Events);
-        let terminal = &mut self.terminal;
-        let tx = &mut self.tx;
-        let rx = &mut self.rx;
-
-        let mut bytes_transferred = 0;
-        let mut duration = Duration::from_secs(0);
-
-        terminal.clear()?;
+        self.terminal.clear()?;
         for event in events {
             match event {
                 Event::Input(InputEvent::Key(KeyEvent {
                     code: KeyCode::Left,
-                    modifiers: _,
+                    ..
                 })) => {
-                    rate = checked_sub(rate, 10);
-                    tx.send(Message::UpdateRate(rate))?;
+                    self.decrease_rate();
                 }
                 Event::Input(InputEvent::Key(KeyEvent {
                     code: KeyCode::Right,
-                    modifiers: _,
+                    ..
                 })) => {
-                    rate = checked_add(rate, 10);
-                    tx.send(Message::UpdateRate(rate))?;
+                    self.increase_rate();
+                }
+                Event::Input(InputEvent::Key(KeyEvent {
+                    code: KeyCode::Char(' '),
+                    ..
+                })) => {
+                    self.toggle_paused()?;
                 }
                 Event::Input(InputEvent::Key(KeyEvent {
                     code: KeyCode::Char('c'),
                     modifiers: KeyModifiers::CONTROL,
                 })) => {
-                    tx.send(Message::Interrupted)?;
+                    self.tx.send(Message::Interrupted)?;
                     break;
                 }
                 _ => {}
             }
-            match rx.get() {
-                ProgressMessage::Interrupted => {
-                    break;
-                }
-                ProgressMessage::Transfer(bytes, age) => {
-                    bytes_transferred = bytes;
-                    duration = age;
-                }
-                _ => {}
+            if let ProgressMessage::Interrupted = self.rx.get() {
+                break;
             }
-            terminal.draw(|f| {
-                Self::draw(f, rate.clone(), bytes_transferred, duration)
-            })?;
+            let progress_view = ProgressView {
+                bytes_transferred: self.progress.load(Ordering::Relaxed),
+                start_time,
+                ..Default::default()
+            };
+            self.terminal.draw(|f| Self::draw(f, progress_view))?;
         }
         Ok(Cleanup())
     }
 
-    fn draw<B: Backend>(
-        f: &mut Frame<B>,
-        rate: NonZeroU32,
-        bytes_transferred: usize,
-        duration: Duration,
-    ) {
-        let para = Paragraph::new(format!(
-            "{:?} {} copying at {} bytes/sec",
-            duration, bytes_transferred, rate,
-        ));
+    fn toggle_paused(&mut self) -> Result<()> {
+        let config = Config::current();
+        Config {
+            paused: !config.paused,
+            ..config
+        }.make_current();
+        Ok(())
+    }
+
+    fn increase_rate(&mut self) {
+        let config = Config::current();
+        let limit = checked_add(config.limit(), 10);
+        Config {
+            limit: Some(limit),
+            ..config
+        }.make_current();
+    }
+
+    fn decrease_rate(&mut self) {
+        let config = Config::current();
+        let limit = checked_sub(config.limit(), 10);
+        Config {
+            limit: Some(limit),
+            ..config
+        }.make_current();
+    }
+
+    fn draw<B: Backend>(f: &mut Frame<B>, progress: ProgressView) {
+        let config = Config::current();
+
+        let pause = if config.paused { " [PAUSED]" } else { "" };
+        let limit = SizeFormatterBinary::new(config.limit().get() as u64);
+        let ProgressView {
+            recent_throughput,
+            bytes_transferred,
+            ..
+        } = progress;
+
+        let para = format!(
+            "{:.2}B {} [{:.2}B/s / {:.2}B/s measured] {}",
+            SizeFormatterBinary::new(bytes_transferred as u64),
+            format_duration(progress.elapsed()),
+            limit,
+            SizeFormatterBinary::new(recent_throughput as u64),
+            pause,
+        );
 
         let size = f.size();
 
         let row = Rect::new(0, 0, size.width, 1);
 
-        f.render_widget(para, row);
+        f.render_widget(Paragraph::new(para), row);
     }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let duration = chrono::Duration::from_std(duration).unwrap();
+    format!(
+        "{}:{:02}:{:02}",
+        duration.num_hours(),
+        duration.num_minutes() % 60,
+        duration.num_seconds() % 60,
+    )
 }
 
 impl Drop for UserInterface {
