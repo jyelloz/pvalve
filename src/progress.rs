@@ -1,5 +1,12 @@
 use std::{
-    sync::{Arc, RwLock},
+    sync::{
+        Arc,
+        RwLock,
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+    },
     time::{Duration, Instant},
 };
 use sum_queue::{QueueStats, SumQueue};
@@ -30,6 +37,8 @@ pub struct ProgressView {
     pub bytes_transferred: usize,
     pub recent_throughput: f32,
 }
+
+pub struct ProgressCounter(Arc<AtomicUsize>);
 
 impl ProgressView {
     pub fn elapsed(&self) -> Duration {
@@ -97,5 +106,20 @@ impl Into<ProgressView> for &Progress {
             bytes_transferred: self.bytes_transferred,
             recent_throughput: self.window_transfer_rate(),
         }
+    }
+}
+
+impl ProgressCounter {
+    pub fn new(counter: Arc<AtomicUsize>) -> Self {
+        Self(counter)
+    }
+    pub fn get(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+impl Into<usize> for ProgressCounter {
+    fn into(self) -> usize {
+        self.get()
     }
 }
