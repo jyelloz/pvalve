@@ -6,83 +6,87 @@ use governor::{
 use std::{
     io::{Error, ErrorKind, Result, Write},
     num::NonZeroU32,
-    sync::mpsc::Receiver,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+        mpsc::Receiver,
+    },
     thread::sleep,
-    time::{Duration, Instant},
 };
 
-use nonzero_ext::nonzero;
-
-use crate::ipc::{Message, ProgressMessage};
-use crate::memslot::WriteHalf;
+use crate::{
+    ipc::Message,
+    config::Config,
+};
 
 const NUL: u8 = 0x0;
 const LF: u8 = 0xA;
 
-type DirectRateLimiter<C> = RateLimiter<NotKeyed, InMemoryState, C>;
-
-fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
-    buf.iter().position(|byte| delimiter == *byte)
+pub trait WithProgress<W> {
+    fn progress(self) -> ProgressWriter<W>;
 }
-
-struct Progress {
-    bytes_transferred: usize,
-    time_started: Instant,
-}
-
-impl Progress {
-    fn duration(&self) -> Duration {
-        Instant::now().duration_since(self.time_started)
-    }
-    fn add(&mut self, bytes: usize) -> usize {
-        self.bytes_transferred += bytes;
-        self.bytes_transferred
-    }
-}
-
-impl Default for Progress {
-    fn default() -> Self {
-        Self {
-            bytes_transferred: 0,
-            time_started: Instant::now(),
+impl <W> WithProgress<W> for W where W: Write {
+    fn progress(self) -> ProgressWriter<W> {
+        ProgressWriter {
+            inner: self,
+            bytes_transferred: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct ProgressWriter<W> {
+    inner: W,
+    bytes_transferred: Arc<AtomicUsize>,
+}
+
+impl <W> ProgressWriter<W> {
+    pub fn bytes_transferred(&self) -> Arc<AtomicUsize> {
+        self.bytes_transferred.clone()
+    }
+}
+
+impl <W: Write> Write for ProgressWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        let bytes_transferred = self.inner.write(buf)?;
+        self.bytes_transferred.fetch_add(bytes_transferred, Ordering::Relaxed);
+        Ok(bytes_transferred)
+    }
+    fn flush(&mut self) -> Result<()> {
+        self.inner.flush()
+    }
+}
+
+type DirectRateLimiter<C> = RateLimiter<NotKeyed, InMemoryState, C>;
 
 pub struct RateLimitedWriter<W> {
     inner: W,
     limiter: DirectRateLimiter<DefaultClock>,
+    clock: DefaultClock,
     rate: NonZeroU32,
-    rx: Option<Receiver<Message>>,
-    tx: Option<WriteHalf<ProgressMessage>>,
-    progress: Progress,
+    rate_updates: Receiver<Message>,
 }
 
 impl<W> RateLimitedWriter<W> {
-    pub fn writer_with_rate(writer: W, rate: NonZeroU32) -> Self {
-        Self {
-            inner: writer,
-            limiter: RateLimiter::direct(Quota::per_second(rate)),
-            rate,
-            rx: None,
-            tx: None,
-            progress: Default::default(),
-        }
-    }
-
     pub fn writer_with_rate_and_updates(
         writer: W,
         rate: NonZeroU32,
         rate_updates: Receiver<Message>,
-        progress_updates: WriteHalf<ProgressMessage>,
     ) -> Self {
+        let clock = DefaultClock::default();
+        let limiter = RateLimiter::direct_with_clock(
+            Quota::per_second(rate),
+            &clock
+        );
         Self {
             inner: writer,
-            limiter: RateLimiter::direct(Quota::per_second(rate)),
+            clock,
+            limiter,
             rate,
-            rx: Some(rate_updates),
-            tx: Some(progress_updates),
-            progress: Default::default(),
+            rate_updates,
         }
     }
 
@@ -91,36 +95,27 @@ impl<W> RateLimitedWriter<W> {
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
-        self.limiter = RateLimiter::direct(
-            Quota::per_second(rate).allow_burst(nonzero!(1u32))
+        dbg!(rate);
+        self.limiter = RateLimiter::direct_with_clock(
+            Quota::per_second(rate),
+            &self.clock,
         );
         self.rate = rate;
     }
 
-    fn update(&mut self) -> bool {
-        if let Some(updates) = &mut self.rx {
-            if let Ok(message) = updates.try_recv() {
-                match message {
-                    Message::UpdateRate(rate) => {
-                        self.set_rate(rate);
-                        return false;
-                    }
-                    Message::Interrupted => {
-                        return true;
-                    }
-                }
-            }
+    fn handle_control_message(&mut self) -> bool {
+        let new_rate = Config::current().limit();
+        if new_rate != self.rate {
+            self.set_rate(new_rate);
         }
-        return false;
+        match self.rate_updates.try_recv() {
+            Ok(Message::Interrupted) => {
+                true
+            },
+            _ => false
+        }
     }
 
-    fn update_progress(&mut self, bytes_transferred: usize) {
-        if let Some(tx) = &mut self.tx {
-            let bytes_transferred = self.progress.add(bytes_transferred);
-            let duration = self.progress.duration();
-            tx.set(ProgressMessage::Transfer(bytes_transferred, duration));
-        }
-    }
 }
 
 impl<W> Write for RateLimitedWriter<W>
@@ -128,7 +123,7 @@ where
     W: Write,
 {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if self.update() {
+        if self.handle_control_message() {
             return Err(Error::new(
                 ErrorKind::BrokenPipe,
                 "Process interrupted",
@@ -140,7 +135,6 @@ where
         if bytes_transferred < len {
             self.flush()?;
         }
-        self.update_progress(bytes_transferred);
         Ok(bytes_transferred)
     }
 
@@ -193,6 +187,10 @@ where
     fn flush(&mut self) -> Result<()> {
         self.inner.flush()
     }
+}
+
+fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
+    buf.iter().position(|byte| delimiter == *byte)
 }
 
 fn wait_for_at_most(limiter: &DirectRateLimiter<DefaultClock>, goal: u32) -> u32 {
