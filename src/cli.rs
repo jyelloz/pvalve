@@ -1,11 +1,8 @@
 use gumdrop::Options;
 
 use std::{
+    num::{NonZeroU32, ParseIntError},
     str::FromStr,
-    num::{
-        NonZeroU32,
-        ParseIntError,
-    },
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -15,8 +12,7 @@ impl FromStr for Speed {
     type Err = ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        NonZeroU32::from_str(s)
-            .map(|i| Self(i))
+        NonZeroU32::from_str(s).map(|i| Self(i))
     }
 }
 
@@ -41,11 +37,17 @@ pub struct Invocation {
 
 #[derive(Debug, Options)]
 pub struct Opts {
-    #[options(short="L")]
+    #[options(short = "L")]
     speed_limit: Option<Speed>,
-    #[options(help="enable line-oriented mode where measurements apply to lines, not bytes")]
+    #[options(
+        help = "enable line-oriented mode where measurements apply to lines, not bytes"
+    )]
     line_mode: bool,
-    #[options(short="0", long="null", help="same as line-oriented mode, except the lines are NUL-separated")]
+    #[options(
+        short = "0",
+        long = "null",
+        help = "same as line-oriented mode, except the lines are NUL-separated"
+    )]
     null_mode: bool,
     help: bool,
 }
@@ -56,7 +58,6 @@ impl Opts {
         Invocation::from(opts)
     }
 }
-
 
 impl From<&Opts> for Mode {
     fn from(opts: &Opts) -> Self {
@@ -74,10 +75,7 @@ impl From<Opts> for Invocation {
     fn from(opts: Opts) -> Self {
         let mode = Mode::from(&opts);
         let speed = opts.speed_limit;
-        Invocation {
-            mode,
-            speed,
-        }
+        Invocation { mode, speed }
     }
 }
 
@@ -88,10 +86,7 @@ mod tests {
     fn when__mode_not_selected__then__bytes_is_used() -> anyhow::Result<()> {
         let opts = Opts::parse_args_default::<&str>(&[])?;
         let mode = Invocation::from(opts).mode;
-        assert_eq!(
-            mode,
-            Mode::Bytes,
-        );
+        assert_eq!(mode, Mode::Bytes,);
         Ok(())
     }
 
@@ -99,10 +94,7 @@ mod tests {
     fn when__line_mode_selected__then__lines_is_used() -> anyhow::Result<()> {
         let opts = Opts::parse_args_default(&["-l"])?;
         let mode = Invocation::from(opts).mode;
-        assert_eq!(
-            mode,
-            Mode::Lines,
-        );
+        assert_eq!(mode, Mode::Lines,);
         Ok(())
     }
 
@@ -110,10 +102,7 @@ mod tests {
     fn when__null_mode_selected__then__nulls_is_used() -> anyhow::Result<()> {
         let opts = Opts::parse_args_default(&["-0"])?;
         let mode = Invocation::from(opts).mode;
-        assert_eq!(
-            mode,
-            Mode::Nulls,
-        );
+        assert_eq!(mode, Mode::Nulls,);
         Ok(())
     }
 }
