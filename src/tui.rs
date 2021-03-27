@@ -2,11 +2,7 @@ use std::{
     fs::{File, OpenOptions},
     io, iter,
     num::NonZeroU32,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-        mpsc::{SendError, Sender},
-    },
+    sync::mpsc::{SendError, Sender},
     time::{
         Duration,
         Instant,
@@ -33,7 +29,10 @@ use crate::{
     config::Config,
     ipc::{Message, ProgressMessage},
     memslot::ReadHalf,
-    progress::ProgressView,
+    progress::{
+        ProgressView,
+        ProgressCounter,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -97,7 +96,7 @@ pub struct UserInterface {
     terminal: CrossTerminal,
     tx: Sender<Message>,
     rx: ReadHalf<ProgressMessage>,
-    progress: Arc<AtomicUsize>,
+    progress: ProgressCounter,
 }
 
 pub struct Cleanup();
@@ -118,7 +117,7 @@ impl UserInterface {
     pub fn new(
         tx: Sender<Message>,
         rx: ReadHalf<ProgressMessage>,
-        progress: Arc<AtomicUsize>,
+        progress: ProgressCounter,
     ) -> Result<Self> {
         let backend = Self::initialize_backend()?;
         let terminal = Terminal::new(backend)?;
@@ -172,7 +171,7 @@ impl UserInterface {
                 break;
             }
             let progress_view = ProgressView {
-                bytes_transferred: self.progress.load(Ordering::Relaxed),
+                bytes_transferred: self.progress.get(),
                 start_time,
                 ..Default::default()
             };
