@@ -29,7 +29,7 @@ impl<T> ReadHalf<T>
 where
     T: Clone + Send + Sync,
 {
-    pub fn get(&mut self) -> T {
+    pub fn get(&self) -> T {
         self.0.read().unwrap().clone()
     }
 }
