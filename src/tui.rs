@@ -45,6 +45,12 @@ pub enum UserInterfaceError {
     IPC(#[from] SendError<Message>),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Mode {
+    Progress,
+    Edit,
+}
+
 type Result<T> = std::result::Result<T, UserInterfaceError>;
 
 #[derive(Debug)]
@@ -137,35 +143,71 @@ impl UserInterface {
     }
     pub fn run(mut self, start_time: Instant) -> Result<Cleanup> {
         let events = iter::once(Event::Tick).chain(Events);
+        let mut mode = Mode::Progress;
+        let mut input = String::new();
         self.terminal.clear()?;
         for event in events {
-            match event {
-                Event::Input(InputEvent::Key(KeyEvent {
-                    code: KeyCode::Left,
-                    ..
-                })) => {
-                    self.decrease_rate();
-                }
-                Event::Input(InputEvent::Key(KeyEvent {
-                    code: KeyCode::Right,
-                    ..
-                })) => {
-                    self.increase_rate();
-                }
-                Event::Input(InputEvent::Key(KeyEvent {
-                    code: KeyCode::Char(' '),
-                    ..
-                })) => {
-                    self.toggle_paused()?;
-                }
-                Event::Input(InputEvent::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::CONTROL,
-                })) => {
-                    self.tx.send(Message::Interrupted)?;
-                    break;
-                }
-                _ => {}
+            match mode {
+                Mode::Progress => match event {
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Char('e'),
+                        ..
+                    })) => {
+                        mode = Mode::Edit;
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Left,
+                        ..
+                    })) => {
+                        self.decrease_rate();
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Right,
+                        ..
+                    })) => {
+                        self.increase_rate();
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Char(' '),
+                        ..
+                    })) => {
+                        self.toggle_paused()?;
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Char('c'),
+                        modifiers: KeyModifiers::CONTROL,
+                    })) => {
+                        self.tx.send(Message::Interrupted)?;
+                        break;
+                    },
+                    _ => {},
+                },
+                Mode::Edit => match event {
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        ..
+                    })) => {
+                        input.clear();
+                        mode = Mode::Progress;
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent { code: KeyCode::Char(code @ '0'..='9'), .. })) => {
+                        input.push(code);
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Enter,
+                        ..
+                    })) => {
+                        let new_rate = u32::from_str_radix(&input, 10)
+                            .ok()
+                            .and_then(NonZeroU32::new);
+                        input.clear();
+                        if let Some(new_rate) = new_rate {
+                            self.set_limit(new_rate);
+                        }
+                        mode = Mode::Progress;
+                    },
+                    _ => {},
+                },
             }
             if let ProgressMessage::Interrupted = self.rx.get() {
                 break;
@@ -175,7 +217,14 @@ impl UserInterface {
                 start_time,
                 ..Default::default()
             };
-            self.terminal.draw(|f| Self::draw(f, progress_view))?;
+            let config = Config::current();
+            self.terminal.draw(|f| Self::draw(
+                    f,
+                    mode,
+                    config,
+                    progress_view,
+                    &input,
+            ))?;
         }
         Ok(Cleanup())
     }
@@ -189,26 +238,44 @@ impl UserInterface {
         Ok(())
     }
 
-    fn increase_rate(&mut self) {
+    fn set_limit(&mut self, limit: NonZeroU32) {
         let config = Config::current();
-        let limit = checked_add(config.limit(), 10);
         Config {
             limit: Some(limit),
             ..config
         }.make_current();
+    }
+
+    fn increase_rate(&mut self) {
+        let config = Config::current();
+        let limit = checked_add(config.limit(), 10);
+        self.set_limit(limit);
     }
 
     fn decrease_rate(&mut self) {
         let config = Config::current();
         let limit = checked_sub(config.limit(), 10);
-        Config {
-            limit: Some(limit),
-            ..config
-        }.make_current();
+        self.set_limit(limit);
     }
 
-    fn draw<B: Backend>(f: &mut Frame<B>, progress: ProgressView) {
-        let config = Config::current();
+    fn draw<B: Backend>(
+        f: &mut Frame<B>,
+        mode: Mode,
+        config: Config,
+        progress: ProgressView,
+        input: &str,
+    ) {
+        match mode {
+            Mode::Progress => Self::draw_progress_mode(f, config, progress),
+            Mode::Edit => Self::draw_update_mode(f, &input),
+        }
+    }
+
+    fn draw_progress_mode<B: Backend>(
+        f: &mut Frame<B>,
+        config: Config,
+        progress: ProgressView
+    ) {
 
         let pause = if config.paused { " [PAUSED]" } else { "" };
         let limit = SizeFormatterBinary::new(config.limit().get() as u64);
@@ -232,7 +299,17 @@ impl UserInterface {
         let row = Rect::new(0, 0, size.width, 1);
 
         f.render_widget(Paragraph::new(para), row);
+
     }
+
+    fn draw_update_mode<B: Backend>(f: &mut Frame<B>, input: &str) {
+        let row = Rect {
+            height: 1,
+            ..f.size()
+        };
+        f.render_widget(Paragraph::new(format!("enter a new rate: {}", input)), row);
+    }
+
 }
 
 fn format_duration(duration: Duration) -> String {
