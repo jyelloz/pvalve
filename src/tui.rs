@@ -194,6 +194,12 @@ impl UserInterface {
                         input.push(code);
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Backspace,
+                        ..
+                    })) => {
+                        input.pop();
+                    },
+                    Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Enter,
                         ..
                     })) => {
