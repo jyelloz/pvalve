@@ -11,8 +11,18 @@ use std::{
 
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::Rect,
+    layout::{
+        Rect,
+        Layout,
+        Constraint,
+        Direction,
+    },
     widgets::Paragraph,
+    style::{
+        Style,
+        Color,
+        Modifier,
+    },
     Frame, Terminal,
 };
 
@@ -190,7 +200,10 @@ impl UserInterface {
                         input.clear();
                         mode = Mode::Progress;
                     },
-                    Event::Input(InputEvent::Key(KeyEvent { code: KeyCode::Char(code @ '0'..='9'), .. })) => {
+                    Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Char(code @ '0'..='9'),
+                        ..
+                    })) => {
                         input.push(code);
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
@@ -283,28 +296,42 @@ impl UserInterface {
         progress: ProgressView
     ) {
 
-        let pause = if config.paused { " [PAUSED]" } else { "" };
+        let pause = if config.paused { "[PAUSED]" } else { "" };
         let limit = SizeFormatterBinary::new(config.limit().get() as u64);
         let ProgressView {
-            recent_throughput,
             bytes_transferred,
             ..
         } = progress;
 
         let para = format!(
-            "{:.2}B {} [{:.2}B/s / {:.2}B/s measured] {}",
+            "{:.2}B {} [{:.2}B/s]",
             SizeFormatterBinary::new(bytes_transferred as u64),
             format_duration(progress.elapsed()),
             limit,
-            SizeFormatterBinary::new(recent_throughput as u64),
-            pause,
         );
 
-        let size = f.size();
+        let row = Rect {
+            height: 1,
+            ..f.size()
+        };
 
-        let row = Rect::new(0, 0, size.width, 1);
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(para.len() as u16),
+                Constraint::Length(1),
+                Constraint::Length(pause.len() as u16),
+            ])
+            .split(row);
 
-        f.render_widget(Paragraph::new(para), row);
+        let progress = Paragraph::new(para);
+        let pause = Paragraph::new(pause)
+            .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
+
+        if let [l, _, r] = *layout {
+            f.render_widget(progress, l);
+            f.render_widget(pause, r);
+        }
 
     }
 
@@ -313,7 +340,31 @@ impl UserInterface {
             height: 1,
             ..f.size()
         };
-        f.render_widget(Paragraph::new(format!("enter a new rate: {}", input)), row);
+        let message = "enter a new rate:";
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(
+                [
+                    Constraint::Length(message.len() as u16),
+                    Constraint::Length(1),
+                    Constraint::Min(10),
+                ]
+            )
+            .split(row);
+        let para = Paragraph::new(message)
+            .style(
+                Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+            );
+        let input_length = input.len() as u16;
+        let input = Paragraph::new(input)
+            .style(Style::default().add_modifier(Modifier::BOLD));
+        if let [l, _, r] = *layout {
+            f.set_cursor(r.x + input_length, r.y);
+            f.render_widget(para, l);
+            f.render_widget(input, r);
+        }
     }
 
 }
