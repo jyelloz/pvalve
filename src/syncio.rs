@@ -9,12 +9,14 @@ use std::{
     sync::{
         Arc,
         atomic::{
+            AtomicBool,
             AtomicUsize,
             Ordering,
         },
         mpsc::Receiver,
     },
     thread::sleep,
+    time::Duration,
 };
 
 use crate::{
@@ -229,5 +231,39 @@ fn wait_for_one(limiter: &DirectRateLimiter<DefaultClock>) {
     while let Err(not_until) = limiter.check() {
         let delay = not_until.wait_time_from(now);
         sleep(delay);
+    }
+}
+
+struct Paused(Arc<AtomicBool>);
+
+impl Paused {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::default()))
+    }
+    fn paused(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+struct PauseableWriter<W> {
+    writer: W,
+    paused: Paused,
+}
+
+impl <W> PauseableWriter<W> {
+    fn paused(&self) -> bool {
+        self.paused.paused()
+    }
+}
+
+impl <W: Write> Write for PauseableWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        while self.paused() {
+            sleep(Duration::from_millis(500));
+        }
+        self.write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        self.writer.flush()
     }
 }
