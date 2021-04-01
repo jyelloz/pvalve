@@ -98,7 +98,6 @@ impl<W> RateLimitedWriter<W> {
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
-        dbg!(rate);
         self.limiter = RateLimiter::direct_with_clock(
             Quota::per_second(rate),
             &self.clock,
