@@ -104,9 +104,12 @@ type CrossTerminal = Terminal<CrosstermBackend<File>>;
 
 pub struct UserInterface {
     terminal: CrossTerminal,
-    tx: Sender<Message>,
-    rx: ReadHalf<ProgressMessage>,
+    shutdown: LatchMonitor,
     progress: ProgressCounter,
+    config: Config,
+    config_tx: WatchSender<Config>,
+    paused: Latch,
+    aborted: Latch,
 }
 
 pub struct Cleanup();
@@ -125,17 +128,23 @@ impl Drop for Cleanup {
 
 impl UserInterface {
     pub fn new(
-        tx: Sender<Message>,
-        rx: ReadHalf<ProgressMessage>,
+        paused: Latch,
+        aborted: Latch,
+        shutdown: LatchMonitor,
+        config: Config,
         progress: ProgressCounter,
+        config_tx: WatchSender<Config>,
     ) -> Result<Self> {
         let backend = Self::initialize_backend()?;
         let terminal = Terminal::new(backend)?;
         Ok(Self {
             terminal,
-            rx,
-            tx,
+            shutdown,
+            config,
             progress,
+            config_tx,
+            paused,
+            aborted,
         })
     }
     fn initialize_backend() -> Result<CrosstermBackend<File>> {
@@ -175,13 +184,13 @@ impl UserInterface {
                         code: KeyCode::Char(' '),
                         ..
                     })) => {
-                        self.toggle_paused()?;
+                        self.toggle_paused();
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Char('c'),
                         modifiers: KeyModifiers::CONTROL,
                     })) => {
-                        self.tx.send(Message::Interrupted)?;
+                        self.aborted.on();
                         break;
                     },
                     _ => {},
@@ -222,7 +231,7 @@ impl UserInterface {
                     _ => {},
                 },
             }
-            if let ProgressMessage::Interrupted = self.rx.get() {
+            if self.shutdown.active() {
                 break;
             }
             let progress_view = ProgressView {
@@ -230,11 +239,13 @@ impl UserInterface {
                 start_time,
                 ..Default::default()
             };
-            let config = Config::current();
+            let config = self.config.clone();
+            let active = self.paused.active();
             self.terminal.draw(|f| Self::draw(
                     f,
                     mode,
                     config,
+                    active,
                     progress_view,
                     &input,
             ))?;
@@ -242,32 +253,25 @@ impl UserInterface {
         Ok(Cleanup())
     }
 
-    fn toggle_paused(&mut self) -> Result<()> {
-        let config = Config::current();
-        Config {
-            paused: !config.paused,
-            ..config
-        }.make_current();
-        Ok(())
+    fn toggle_paused(&mut self) {
+        self.paused.toggle();
     }
 
     fn set_limit(&mut self, limit: NonZeroU32) {
-        let config = Config::current();
-        Config {
+        self.config = Config {
             limit: Some(limit),
-            ..config
-        }.make_current();
+            ..self.config
+        };
+        self.config_tx.send(self.config.clone());
     }
 
     fn increase_rate(&mut self) {
-        let config = Config::current();
-        let limit = checked_add(config.limit(), 10);
+        let limit = checked_add(self.config.limit(), 10);
         self.set_limit(limit);
     }
 
     fn decrease_rate(&mut self) {
-        let config = Config::current();
-        let limit = checked_sub(config.limit(), 10);
+        let limit = checked_sub(self.config.limit(), 10);
         self.set_limit(limit);
     }
 
@@ -275,11 +279,12 @@ impl UserInterface {
         f: &mut Frame<B>,
         mode: Mode,
         config: Config,
+        paused: bool,
         progress: ProgressView,
         input: &str,
     ) {
         match mode {
-            Mode::Progress => Self::draw_progress_mode(f, config, progress),
+            Mode::Progress => Self::draw_progress_mode(f, config, paused, progress),
             Mode::Edit => Self::draw_update_mode(f, &input),
         }
     }
@@ -287,10 +292,11 @@ impl UserInterface {
     fn draw_progress_mode<B: Backend>(
         f: &mut Frame<B>,
         config: Config,
+        paused: bool,
         progress: ProgressView
     ) {
 
-        let pause = if config.paused { "[PAUSED]" } else { "" };
+        let pause = if paused { "[PAUSED]" } else { "" };
         let limit = SizeFormatterBinary::new(config.limit().get() as u64);
         let ProgressView {
             bytes_transferred,
