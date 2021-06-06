@@ -1,41 +1,73 @@
-use governor::{
-    clock::{Clock as _, DefaultClock},
-    state::{InMemoryState, NotKeyed},
-    NegativeMultiDecision, Quota, RateLimiter,
-};
 use std::{
-    io::{Error, ErrorKind, Result, Write},
+    io::{
+        Error,
+        ErrorKind,
+        Result,
+        Write,
+    },
     num::NonZeroU32,
     sync::{
         Arc,
         atomic::{
-            AtomicBool,
             AtomicUsize,
             Ordering,
         },
-        mpsc::Receiver,
     },
     thread::sleep,
     time::Duration,
 };
 
+use governor::{
+    clock::{
+        Clock as _,
+        DefaultClock,
+    },
+    state::{
+        InMemoryState,
+        NotKeyed,
+    },
+    NegativeMultiDecision,
+    Quota,
+    RateLimiter,
+};
+
 use crate::{
-    ipc::Message,
     progress::ProgressCounter,
-    config::Config,
+    config::{
+        ConfigMonitor,
+        LatchMonitor,
+    },
 };
 
 const NUL: u8 = 0x0;
 const LF: u8 = 0xA;
 
-pub trait WithProgress<W> {
+pub trait WriteExt<W> {
     fn progress(self) -> ProgressWriter<W>;
+    fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W>;
+    fn cancellable(self, cancelled: LatchMonitor) -> CancellableWriter<W>;
 }
-impl <W> WithProgress<W> for W where W: Write {
+
+impl <W: Write> WriteExt<W> for W {
+    /// Wrap any writer into one which can report progress.
     fn progress(self) -> ProgressWriter<W> {
         ProgressWriter {
             inner: self,
             bytes_transferred: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+    /// Wrap any writer into one which can be paused and resumed.
+    fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W> {
+        PauseableWriter {
+            inner: self,
+            paused,
+        }
+    }
+    /// Wrap any writer into one which can be cancelled.
+    fn cancellable(self, cancelled: LatchMonitor) -> CancellableWriter<W> {
+        CancellableWriter {
+            inner: self,
+            cancelled,
         }
     }
 }
@@ -69,32 +101,22 @@ pub struct RateLimitedWriter<W> {
     inner: W,
     limiter: DirectRateLimiter<DefaultClock>,
     clock: DefaultClock,
-    rate: NonZeroU32,
-    rate_updates: Receiver<Message>,
+    config: ConfigMonitor,
 }
 
 impl<W> RateLimitedWriter<W> {
-    pub fn writer_with_rate_and_updates(
-        writer: W,
-        rate: NonZeroU32,
-        rate_updates: Receiver<Message>,
-    ) -> Self {
+    pub fn writer_with_config(writer: W, mut config: ConfigMonitor) -> Self {
         let clock = DefaultClock::default();
         let limiter = RateLimiter::direct_with_clock(
-            Quota::per_second(rate),
+            Quota::per_second(config.limit()),
             &clock
         );
         Self {
             inner: writer,
             clock,
             limiter,
-            rate,
-            rate_updates,
+            config,
         }
-    }
-
-    pub fn get_rate(&self) -> NonZeroU32 {
-        self.rate
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
@@ -102,35 +124,18 @@ impl<W> RateLimitedWriter<W> {
             Quota::per_second(rate),
             &self.clock,
         );
-        self.rate = rate;
     }
 
-    fn handle_control_message(&mut self) -> bool {
-        let new_rate = Config::current().limit();
-        if new_rate != self.rate {
+    fn poll_for_config_update(&mut self) {
+        if let Some(new_rate) = self.config.limit_if_new() {
             self.set_rate(new_rate);
         }
-        match self.rate_updates.try_recv() {
-            Ok(Message::Interrupted) => {
-                true
-            },
-            _ => false
-        }
     }
-
 }
 
-impl<W> Write for RateLimitedWriter<W>
-where
-    W: Write,
-{
+impl<W: Write> Write for RateLimitedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if self.handle_control_message() {
-            return Err(Error::new(
-                ErrorKind::BrokenPipe,
-                "Process interrupted",
-            ));
-        }
+        self.poll_for_config_update();
         let len = buf.len();
         let end = wait_for_at_most(&self.limiter, len as u32) as usize;
         let bytes_transferred = self.inner.write(&buf[..end])?;
@@ -173,10 +178,7 @@ impl<W> RateLimitedLineWriter<W> {
     }
 }
 
-impl<W> Write for RateLimitedLineWriter<W>
-where
-    W: Write,
-{
+impl<W: Write> Write for RateLimitedLineWriter<W> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         if let Some(end) = find_newline(buf, self.delimiter) {
             wait_for_one(&self.limiter);
@@ -233,25 +235,14 @@ fn wait_for_one(limiter: &DirectRateLimiter<DefaultClock>) {
     }
 }
 
-struct Paused(Arc<AtomicBool>);
-
-impl Paused {
-    fn new() -> Self {
-        Self(Arc::new(AtomicBool::default()))
-    }
-    fn paused(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
-struct PauseableWriter<W> {
-    writer: W,
-    paused: Paused,
+pub struct PauseableWriter<W> {
+    inner: W,
+    paused: LatchMonitor,
 }
 
 impl <W> PauseableWriter<W> {
-    fn paused(&self) -> bool {
-        self.paused.paused()
+    fn paused(&mut self) -> bool {
+        self.paused.active()
     }
 }
 
@@ -260,9 +251,34 @@ impl <W: Write> Write for PauseableWriter<W> {
         while self.paused() {
             sleep(Duration::from_millis(500));
         }
-        self.write(buf)
+        self.inner.write(buf)
     }
     fn flush(&mut self) -> Result<()> {
-        self.writer.flush()
+        self.inner.flush()
+    }
+}
+
+pub struct CancellableWriter<W> {
+    inner: W,
+    cancelled: LatchMonitor,
+}
+
+impl <W> CancellableWriter<W> {
+    fn cancelled(&mut self) -> bool {
+        self.cancelled.active()
+    }
+}
+
+impl <W: Write> Write for CancellableWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        if self.cancelled() {
+            Err(Error::new(ErrorKind::BrokenPipe, "cancelled"))
+        } else {
+            self.inner.write(buf)
+        }
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.inner.flush()
     }
 }
