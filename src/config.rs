@@ -2,13 +2,16 @@ use std::num::NonZeroU32;
 
 use nonzero_ext::nonzero;
 
-use watch::{WatchReceiver, WatchSender, channel};
+use watch::{
+    WatchReceiver,
+    WatchSender,
+    channel,
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct Config {
     pub limit: Option<NonZeroU32>,
 }
-
 #[derive(Clone)]
 pub struct ConfigMonitor(WatchReceiver<Config>);
 
@@ -16,6 +19,7 @@ pub struct Latch {
     active: bool,
     tx: WatchSender<bool>,
 }
+#[derive(Clone)]
 pub struct LatchMonitor(WatchReceiver<bool>);
 
 impl Config {
@@ -35,7 +39,9 @@ impl ConfigMonitor {
             .map(|config| config.limit())
     }
     pub fn limit(&mut self) -> NonZeroU32 {
-        self.0.get().limit()
+        self.0
+            .get()
+            .limit()
     }
 }
 
