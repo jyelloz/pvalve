@@ -240,12 +240,12 @@ impl UserInterface {
                 ..Default::default()
             };
             let config = self.config.clone();
-            let active = self.paused.active();
+            let paused = self.paused.active();
             self.terminal.draw(|f| Self::draw(
                     f,
                     mode,
                     config,
-                    active,
+                    paused,
                     progress_view,
                     &input,
             ))?;
