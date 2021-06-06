@@ -2,7 +2,6 @@ use std::{
     fs::{File, OpenOptions},
     io, iter,
     num::NonZeroU32,
-    sync::mpsc::{SendError, Sender},
     time::{
         Duration,
         Instant,
@@ -35,14 +34,11 @@ use size_format::SizeFormatterBinary;
 
 use thiserror::Error;
 
+use watch::WatchSender;
+
 use crate::{
-    config::Config,
-    ipc::{Message, ProgressMessage},
-    memslot::ReadHalf,
-    progress::{
-        ProgressView,
-        ProgressCounter,
-    },
+    config::{Config, Latch, LatchMonitor},
+    progress::{ProgressView, ProgressCounter},
 };
 
 #[derive(Debug, Error)]
@@ -51,8 +47,6 @@ pub enum UserInterfaceError {
     IO(#[from] io::Error),
     #[error("I/O error talking to terminal")]
     Crossterm(#[from] crossterm::ErrorKind),
-    #[error("Failed to send control message to stream.")]
-    IPC(#[from] SendError<Message>),
 }
 
 #[derive(Debug, Clone, Copy)]
