@@ -1,18 +1,21 @@
 use nonzero_ext::nonzero;
 use std::{
     io::{self, copy},
-    sync::mpsc::channel,
     time::Instant,
     thread,
 };
 
 use crossterm::tty::IsTty;
 use pvalve::{
-    config::Config,
+    config::{
+        Config,
+        ConfigMonitor,
+        Latch,
+    },
     cli::Opts,
     ipc::ProgressMessage,
     memslot::Memslot,
-    syncio::{RateLimitedWriter, WithProgress as _},
+    syncio::{RateLimitedWriter, WriteExt as _},
     tui::{Cleanup, UserInterface},
 };
 
@@ -26,25 +29,32 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    config.make_current();
+    let (watch_tx, config_watch) = ConfigMonitor::new(config.clone());
 
     let stdin = io::stdin();
     let stdout = io::stdout();
     let (mut state_tx, state_rx) =
         Memslot::new(ProgressMessage::Initial).split();
 
-    let (control_tx, control_rx) = channel();
+    let mut paused = Latch::new();
+    let mut aborted = Latch::new();
+
     let interactive_mode = !stdin.is_tty() && !stdout.is_tty();
-    let mut stdout = RateLimitedWriter::writer_with_rate_and_updates(
+    let mut stdout = RateLimitedWriter::writer_with_config(
         stdout,
-        rate,
-        control_rx,
-    ).progress();
+        config_watch,
+    )
+        .pauseable(paused.watch())
+        .cancellable(aborted.watch())
+        .progress();
     let ui = if interactive_mode {
         let ui = UserInterface::new(
-            control_tx,
+            paused,
+            aborted,
             state_rx,
+            config.clone(),
             stdout.bytes_transferred(),
+            watch_tx,
         )?;
         Some(thread::spawn(|| ui.run(Instant::now())))
     } else {
