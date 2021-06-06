@@ -1,10 +1,19 @@
 x Decide whether async I/O framework is even necessary. (No, it is not).
-Use a FIFO file instead of a normal file for controlling bandwidth.
-Add line-oriented mode.
-Define command-line interface.
+x Use a FIFO file instead of a normal file for controlling bandwidth. (WONTFIX)
+Add line-oriented mode. +linemode
+Define command-line interface. +cli
 Add a man page.
 Add a readme.
 Add unit tests.
-Add a live control TUI.
-Reduce number of backoff steps to reach 1 credit to a fixed number.
-x Determine if buffering of I/O is done correctly.
+Add a live control TUI. +tui
+x Add full-screen progress monitor UI +tui
+x Add small speed increase/decrease keybindings +tui\n
+x Add pause/resume keybindings +tui
+Add edit mode for text entry speed adjustments +tui
+Reduce number of backoff steps to reach 1 credit to a fixed number. +io
+x Determine if buffering of I/O is done correctly. +io
+x Add an adjustable-bytes-speed Write wrapper. +io
+Add an adjustable-lines-speed Write wrapper. +io +linemode
+Add an adjustable-nulls-speed Write wrapper. +io +linemode
+x Add a cancellable Write wrapper. +io
+x Add a pause/resume Write wrapper. +io
