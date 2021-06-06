@@ -61,9 +61,7 @@ fn main() -> anyhow::Result<()> {
     shutdown.on();
     if let Some(ui) = ui {
         match ui.join() {
-            Err(_) | Ok(Err(_)) => {
-                Cleanup();
-            }
+            Err(_) | Ok(Err(_)) => { Cleanup(); }
             _ => {}
         }
     }
