@@ -21,5 +21,5 @@ watch = "0.2"
 version = "0.3"
 features = []
 [dependencies.tui]
-version = "0.14"
+version = "0.15"
 features = ["crossterm"]
