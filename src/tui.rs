@@ -49,13 +49,102 @@ pub enum UserInterfaceError {
     Crossterm(#[from] crossterm::ErrorKind),
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Mode {
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+enum TuiMode {
     Progress,
     Edit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+struct TransferMode {
+    paused: bool,
+    limit: NonZeroU32,
+}
+
 type Result<T> = std::result::Result<T, UserInterfaceError>;
+
+struct Transition(Option<State>);
+
+impl Transition {
+    fn stay() -> Self {
+        Self(None)
+    }
+    fn to(state: State) -> Self {
+        Self(Some(state))
+    }
+    fn state(self) -> Option<State> {
+        self.0
+    }
+}
+
+impl Default for Transition {
+    fn default() -> Self {
+        Self::stay()
+    }
+}
+
+struct State {
+    tui: TuiMode,
+    transfer: TransferMode,
+}
+impl State {
+    fn tui_mode(&self) -> TuiMode {
+        self.tui
+    }
+    fn is_paused(&self) -> bool {
+        self.transfer.paused
+    }
+    fn limit(&self) -> NonZeroU32 {
+        self.transfer.limit
+    }
+
+
+    fn paused(&self, paused: bool) -> State {
+        Self {
+            transfer: TransferMode {
+                paused,
+                ..self.transfer
+            },
+            ..*self
+        }
+    }
+}
+
+struct PauseCommand;
+impl PauseCommand {
+    fn process(&self, state: &State, event: &Event) -> Transition {
+        if state.tui_mode() != TuiMode::Progress {
+            return Transition::stay();
+        } else if state.is_paused() {
+            return Transition::stay();
+        }
+        match *event {
+            Event::Input(
+                InputEvent::Key(KeyEvent { code: KeyCode::Char(' '), ..  })
+            ) => Transition::to(state.paused(true)),
+            _ => Transition::stay(),
+        }
+
+    }
+}
+
+struct ResumeCommand;
+impl ResumeCommand {
+    fn process(&self, state: &State, event: &Event) -> Transition {
+        if state.tui_mode() != TuiMode::Progress {
+            return Transition::stay();
+        } else if !state.is_paused() {
+            return Transition::stay();
+        }
+        match *event {
+            Event::Input(
+                InputEvent::Key(KeyEvent { code: KeyCode::Char(' '), ..  })
+            ) => Transition::to(state.paused(false)),
+            _ => Transition::stay(),
+        }
+
+    }
+}
 
 #[derive(Debug)]
 enum Event {
@@ -156,17 +245,17 @@ impl UserInterface {
     }
     pub fn run(mut self, start_time: Instant) -> Result<Cleanup> {
         let events = iter::once(Event::Tick).chain(Events);
-        let mut mode = Mode::Progress;
+        let mut mode = TuiMode::Progress;
         let mut input = String::new();
         self.terminal.clear()?;
         for event in events {
             match mode {
-                Mode::Progress => match event {
+                TuiMode::Progress => match event {
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Char('e'),
                         ..
                     })) => {
-                        mode = Mode::Edit;
+                        mode = TuiMode::Edit;
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Left,
@@ -195,13 +284,13 @@ impl UserInterface {
                     },
                     _ => {},
                 },
-                Mode::Edit => match event {
+                TuiMode::Edit => match event {
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Esc,
                         ..
                     })) => {
                         input.clear();
-                        mode = Mode::Progress;
+                        mode = TuiMode::Progress;
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Char(code @ '0'..='9'),
@@ -226,7 +315,7 @@ impl UserInterface {
                         if let Some(new_rate) = new_rate {
                             self.set_limit(new_rate);
                         }
-                        mode = Mode::Progress;
+                        mode = TuiMode::Progress;
                     },
                     _ => {},
                 },
@@ -277,15 +366,15 @@ impl UserInterface {
 
     fn draw<B: Backend>(
         f: &mut Frame<B>,
-        mode: Mode,
+        mode: TuiMode,
         config: Config,
         paused: bool,
         progress: ProgressView,
         input: &str,
     ) {
         match mode {
-            Mode::Progress => Self::draw_progress_mode(f, config, paused, progress),
-            Mode::Edit => Self::draw_update_mode(f, &input),
+            TuiMode::Progress => Self::draw_progress_mode(f, config, paused, progress),
+            TuiMode::Edit => Self::draw_update_mode(f, &input),
         }
     }
 

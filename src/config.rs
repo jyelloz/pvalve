@@ -8,13 +8,14 @@ use watch::{
     channel,
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Config {
     pub limit: Option<NonZeroU32>,
 }
 #[derive(Clone)]
 pub struct ConfigMonitor(WatchReceiver<Config>);
 
+#[derive(Clone)]
 pub struct Latch {
     active: bool,
     tx: WatchSender<bool>,
