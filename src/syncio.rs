@@ -46,6 +46,7 @@ pub trait WriteExt<W> {
     fn progress(self) -> ProgressWriter<W>;
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W>;
     fn cancellable(self, cancelled: LatchMonitor) -> CancellableWriter<W>;
+    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W>;
 }
 
 impl <W: Write> WriteExt<W> for W {
