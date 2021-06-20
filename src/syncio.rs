@@ -71,6 +71,9 @@ impl <W: Write> WriteExt<W> for W {
             cancelled,
         }
     }
+    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W> {
+        RateLimitedWriter::writer_with_config(self, config)
+    }
 }
 
 #[derive(Clone, Debug)]
