@@ -23,6 +23,3 @@ features = []
 [dependencies.tui]
 version = "0.15"
 features = ["crossterm"]
-
-[dev-dependencies]
-crossbeam = "*"
