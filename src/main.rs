@@ -13,7 +13,7 @@ use pvalve::{
         Latch,
     },
     cli::Opts,
-    syncio::{RateLimitedWriter, WriteExt as _},
+    syncio::WriteExt as _,
     tui::{Cleanup, UserInterface},
 };
 
@@ -37,10 +37,7 @@ fn main() -> anyhow::Result<()> {
     let mut aborted = Latch::new();
 
     let interactive_mode = !stdin.is_tty() && !stdout.is_tty();
-    let mut stdout = RateLimitedWriter::writer_with_config(
-        stdout,
-        config_rx,
-    )
+    let mut stdout = stdout.limited(config_rx)
         .pauseable(paused.watch())
         .cancellable(aborted.watch())
         .progress();
