@@ -168,7 +168,6 @@ impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
     fn get_largest_slice<'a>(&mut self, buf: &'a [u8]) -> &'a [u8] {
         let points = self.annotate(buf);
         let buffer_cost = points.len().min(u32::MAX as usize) as u32;
-        dbg!(buffer_cost);
         let end = if buffer_cost < 1 {
             buf.len()
         } else {
@@ -224,7 +223,6 @@ impl <W: Write> Write for RateLimitedWriter<W, DynamicRateLimiter> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.poll_for_config_update();
         let slice = self.get_largest_slice(buf);
-        dbg!(&slice);
         let bytes_transferred = self.inner.write(slice)?;
         if bytes_transferred < buf.len() {
             self.flush()?;
