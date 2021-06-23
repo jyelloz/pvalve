@@ -36,8 +36,8 @@ use thiserror::Error;
 
 use watch::WatchSender;
 
-use crate::{
-    config::{Config, Latch, LatchMonitor},
+use super::{
+    config::{Config, Latch, LatchMonitor, Unit},
     progress::{ProgressView, ProgressCounter},
 };
 
@@ -62,89 +62,6 @@ struct TransferMode {
 }
 
 type Result<T> = std::result::Result<T, UserInterfaceError>;
-
-struct Transition(Option<State>);
-
-impl Transition {
-    fn stay() -> Self {
-        Self(None)
-    }
-    fn to(state: State) -> Self {
-        Self(Some(state))
-    }
-    fn state(self) -> Option<State> {
-        self.0
-    }
-}
-
-impl Default for Transition {
-    fn default() -> Self {
-        Self::stay()
-    }
-}
-
-struct State {
-    tui: TuiMode,
-    transfer: TransferMode,
-}
-impl State {
-    fn tui_mode(&self) -> TuiMode {
-        self.tui
-    }
-    fn is_paused(&self) -> bool {
-        self.transfer.paused
-    }
-    fn limit(&self) -> NonZeroU32 {
-        self.transfer.limit
-    }
-
-
-    fn paused(&self, paused: bool) -> State {
-        Self {
-            transfer: TransferMode {
-                paused,
-                ..self.transfer
-            },
-            ..*self
-        }
-    }
-}
-
-struct PauseCommand;
-impl PauseCommand {
-    fn process(&self, state: &State, event: &Event) -> Transition {
-        if state.tui_mode() != TuiMode::Progress {
-            return Transition::stay();
-        } else if state.is_paused() {
-            return Transition::stay();
-        }
-        match *event {
-            Event::Input(
-                InputEvent::Key(KeyEvent { code: KeyCode::Char(' '), ..  })
-            ) => Transition::to(state.paused(true)),
-            _ => Transition::stay(),
-        }
-
-    }
-}
-
-struct ResumeCommand;
-impl ResumeCommand {
-    fn process(&self, state: &State, event: &Event) -> Transition {
-        if state.tui_mode() != TuiMode::Progress {
-            return Transition::stay();
-        } else if !state.is_paused() {
-            return Transition::stay();
-        }
-        match *event {
-            Event::Input(
-                InputEvent::Key(KeyEvent { code: KeyCode::Char(' '), ..  })
-            ) => Transition::to(state.paused(false)),
-            _ => Transition::stay(),
-        }
-
-    }
-}
 
 #[derive(Debug)]
 enum Event {
@@ -258,6 +175,10 @@ impl UserInterface {
                         mode = TuiMode::Edit;
                     },
                     Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Tab,
+                        ..
+                    })) => { self.cycle_unit(); },
+                    Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Left,
                         ..
                     })) => {
@@ -364,6 +285,11 @@ impl UserInterface {
         self.set_limit(limit);
     }
 
+    fn cycle_unit(&mut self) {
+        self.config.unit.cycle();
+        self.config_tx.send(self.config.clone());
+    }
+
     fn draw<B: Backend>(
         f: &mut Frame<B>,
         mode: TuiMode,
@@ -375,6 +301,14 @@ impl UserInterface {
         match mode {
             TuiMode::Progress => Self::draw_progress_mode(f, config, paused, progress),
             TuiMode::Edit => Self::draw_update_mode(f, &input),
+        }
+    }
+
+    fn abbreviate(unit: Unit) -> &'static str {
+        match unit {
+            Unit::Byte => "B",
+            Unit::Line => "L",
+            Unit::Null => "#",
         }
     }
 
@@ -392,11 +326,13 @@ impl UserInterface {
             ..
         } = progress;
 
+        let unit_abbreviation = Self::abbreviate(config.unit);
         let para = format!(
-            "{:.2}B {} [{:.2}B/s]",
+            "{:.2}B {} [{:.2}{unit}/s]",
             SizeFormatterBinary::new(bytes_transferred as u64),
             format_duration(progress.elapsed()),
             limit,
+            unit=unit_abbreviation,
         );
 
         let row = Rect {
