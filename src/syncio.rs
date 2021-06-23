@@ -59,6 +59,8 @@ impl <W: Write> WriteExt<W> for W {
         ProgressWriter {
             inner: self,
             bytes_transferred: Arc::new(AtomicUsize::new(0)),
+            lines_transferred: Arc::new(AtomicUsize::new(0)),
+            nulls_transferred: Arc::new(AtomicUsize::new(0)),
         }
     }
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W> {
@@ -82,6 +84,8 @@ impl <W: Write> WriteExt<W> for W {
 pub struct ProgressWriter<W> {
     inner: W,
     bytes_transferred: Arc<AtomicUsize>,
+    lines_transferred: Arc<AtomicUsize>,
+    nulls_transferred: Arc<AtomicUsize>,
 }
 
 impl <W> ProgressWriter<W> {
@@ -93,7 +97,12 @@ impl <W> ProgressWriter<W> {
 impl <W: Write> Write for ProgressWriter<W> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let bytes_transferred = self.inner.write(buf)?;
+        let slice = &buf[..bytes_transferred];
+        let lines_transferred = annotate_lines(slice).len();
+        let nulls_transferred = annotate_nulls(slice).len();
         self.bytes_transferred.fetch_add(bytes_transferred, Ordering::Relaxed);
+        self.lines_transferred.fetch_add(lines_transferred, Ordering::Relaxed);
+        self.nulls_transferred.fetch_add(nulls_transferred, Ordering::Relaxed);
         Ok(bytes_transferred)
     }
     fn flush(&mut self) -> Result<()> {
