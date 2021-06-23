@@ -5,25 +5,16 @@ use std::{
 };
 
 use governor::{
-    clock::{
-        Clock,
-        DefaultClock,
-    },
+    clock::Clock,
     state::{
         InMemoryState,
         NotKeyed,
     },
-    NegativeMultiDecision,
-    Quota,
     RateLimiter,
 };
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-enum Unit {
-    Byte,
-    Line,
-    Null,
-}
+use super::config::Unit;
+
 
 type Governor<C> = RateLimiter<NotKeyed, InMemoryState, C>;
 
