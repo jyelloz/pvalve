@@ -28,7 +28,7 @@ use governor::{
     },
     NegativeMultiDecision,
     Quota,
-    RateLimiter,
+    RateLimiter as GovernorRateLimiter,
 };
 
 use crate::{
@@ -36,6 +36,7 @@ use crate::{
     config::{
         ConfigMonitor,
         LatchMonitor,
+        Unit,
     },
 };
 
@@ -43,35 +44,36 @@ const NUL: u8 = 0x0;
 const LF: u8 = 0xA;
 
 pub trait WriteExt<W> {
+    /// Wrap any writer into one which can report progress.
     fn progress(self) -> ProgressWriter<W>;
+    /// Wrap any writer into one which can be paused and resumed.
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W>;
+    /// Wrap any writer into one which can be cancelled.
     fn cancellable(self, cancelled: LatchMonitor) -> CancellableWriter<W>;
-    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W>;
+    /// Wrap any writer into one with a throughput limit.
+    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W, DynamicRateLimiter>;
 }
 
 impl <W: Write> WriteExt<W> for W {
-    /// Wrap any writer into one which can report progress.
     fn progress(self) -> ProgressWriter<W> {
         ProgressWriter {
             inner: self,
             bytes_transferred: Arc::new(AtomicUsize::new(0)),
         }
     }
-    /// Wrap any writer into one which can be paused and resumed.
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W> {
         PauseableWriter {
             inner: self,
             paused,
         }
     }
-    /// Wrap any writer into one which can be cancelled.
     fn cancellable(self, cancelled: LatchMonitor) -> CancellableWriter<W> {
         CancellableWriter {
             inner: self,
             cancelled,
         }
     }
-    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W> {
+    fn limited(self, config: ConfigMonitor) -> RateLimitedWriter<W, DynamicRateLimiter> {
         RateLimitedWriter::writer_with_config(self, config)
     }
 }
@@ -99,35 +101,116 @@ impl <W: Write> Write for ProgressWriter<W> {
     }
 }
 
-type DirectRateLimiter<C> = RateLimiter<NotKeyed, InMemoryState, C>;
+type DirectRateLimiter<C> = GovernorRateLimiter<NotKeyed, InMemoryState, C>;
 
-pub struct RateLimitedWriter<W> {
+pub struct RateLimitedWriter<W, R> {
     inner: W,
-    limiter: DirectRateLimiter<DefaultClock>,
-    clock: DefaultClock,
     config: ConfigMonitor,
+    // unit: Unit,
+    // rate_limit: Option<NonZeroU32>,
+    rate_limiter: R,
 }
 
-impl<W> RateLimitedWriter<W> {
+pub trait RateLimiter {
+    /// Request the desired amount of tokens.
+    ///
+    /// Returns the amount of tokens granted, which is always less than or equal
+    /// to what was requested.
+    ///
+    /// If none are available at the time of request, it blocks until there is
+    /// at least one token available and acquires whatever portion of the
+    /// requested amount that it can.
+    fn request(&mut self, tokens: u32) -> u32;
+}
+
+pub struct DynamicRateLimiter {
+    limiter: Option<DirectRateLimiter<DefaultClock>>,
+}
+
+impl DynamicRateLimiter {
+    pub fn new(limit: Option<NonZeroU32>) -> Self {
+        Self {
+            limiter: Self::limiter(limit)
+        }
+    }
+    fn swapout(&mut self, limit: Option<NonZeroU32>) {
+        self.limiter = Self::limiter(limit);
+    }
+    fn limiter(
+        limit: Option<NonZeroU32>
+    ) -> Option<DirectRateLimiter<DefaultClock>> {
+        limit.map(Quota::per_second)
+            .map(DirectRateLimiter::direct)
+    }
+}
+
+impl RateLimiter for DynamicRateLimiter {
+    fn request(&mut self, tokens: u32) -> u32 {
+        if let Some(limiter) = &mut self.limiter {
+            wait_for_at_most(limiter, tokens)
+        } else {
+            tokens
+        }
+    }
+}
+
+impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
+
     pub fn writer_with_config(writer: W, mut config: ConfigMonitor) -> Self {
-        let clock = DefaultClock::default();
-        let limiter = RateLimiter::direct_with_clock(
-            Quota::per_second(config.limit()),
-            &clock
-        );
+        let rate_limiter = DynamicRateLimiter::new(config.limit().into());
         Self {
             inner: writer,
-            clock,
-            limiter,
+            rate_limiter,
             config,
         }
     }
 
+    fn get_largest_slice<'a>(&mut self, buf: &'a [u8]) -> &'a [u8] {
+        let points = self.annotate(buf);
+        let buffer_cost = points.len().min(u32::MAX as usize) as u32;
+        dbg!(buffer_cost);
+        let end = if buffer_cost < 1 {
+            buf.len()
+        } else {
+            let allowable_tokens = self.rate_limiter.request(buffer_cost);
+            points[allowable_tokens as usize - 1] + 1
+        };
+        &buf[..end]
+    }
+
+    fn annotate(&mut self, buf: &[u8]) -> Vec<usize> {
+        match self.config.unit() {
+            Unit::Byte => Self::annotate_bytes(buf),
+            Unit::Line => Self::annotate_lines(buf),
+            Unit::Null => Self::annotate_nulls(buf),
+        }
+    }
+
+    fn annotate_bytes(buf: &[u8]) -> Vec<usize> {
+        buf.iter()
+            .enumerate()
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn annotate_lines(buf: &[u8]) -> Vec<usize> {
+        buf.iter()
+            .enumerate()
+            .filter(|(_, b)| LF == **b)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn annotate_nulls(buf: &[u8]) -> Vec<usize> {
+        buf.iter()
+            .enumerate()
+            .filter(|(_, b)| NUL == **b)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     fn set_rate(&mut self, rate: NonZeroU32) {
-        self.limiter = RateLimiter::direct_with_clock(
-            Quota::per_second(rate),
-            &self.clock,
-        );
+        self.rate_limiter.swapout(rate.into());
     }
 
     fn poll_for_config_update(&mut self) {
@@ -137,13 +220,13 @@ impl<W> RateLimitedWriter<W> {
     }
 }
 
-impl<W: Write> Write for RateLimitedWriter<W> {
+impl <W: Write> Write for RateLimitedWriter<W, DynamicRateLimiter> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.poll_for_config_update();
-        let len = buf.len();
-        let end = wait_for_at_most(&self.limiter, len as u32) as usize;
-        let bytes_transferred = self.inner.write(&buf[..end])?;
-        if bytes_transferred < len {
+        let slice = self.get_largest_slice(buf);
+        dbg!(&slice);
+        let bytes_transferred = self.inner.write(slice)?;
+        if bytes_transferred < buf.len() {
             self.flush()?;
         }
         Ok(bytes_transferred)
@@ -154,53 +237,7 @@ impl<W: Write> Write for RateLimitedWriter<W> {
     }
 }
 
-pub struct RateLimitedLineWriter<W> {
-    inner: W,
-    limiter: DirectRateLimiter<DefaultClock>,
-    delimiter: u8,
-}
-
-impl<W> RateLimitedLineWriter<W> {
-    pub fn new_linefeed_separated(inner: W, rate: NonZeroU32) -> Self {
-        Self {
-            inner,
-            limiter: RateLimiter::direct(Quota::per_second(rate)),
-            delimiter: LF,
-        }
-    }
-
-    pub fn new_null_separated(inner: W, rate: NonZeroU32) -> Self {
-        Self {
-            inner,
-            limiter: RateLimiter::direct(Quota::per_second(rate)),
-            delimiter: NUL,
-        }
-    }
-
-    pub fn set_rate(&mut self, rate: NonZeroU32) {
-        self.limiter = RateLimiter::direct(Quota::per_second(rate));
-    }
-}
-
-impl<W: Write> Write for RateLimitedLineWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        if let Some(end) = find_newline(buf, self.delimiter) {
-            wait_for_one(&self.limiter);
-            self.inner.write(&buf[..end + 1])
-        } else {
-            self.inner.write(buf)
-        }
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        self.inner.flush()
-    }
-}
-
-fn find_newline(buf: &[u8], delimiter: u8) -> Option<usize> {
-    buf.iter().position(|byte| delimiter == *byte)
-}
-
+/// Should never take more than ~32 recursive steps to terminate.
 fn wait_for_at_most(limiter: &DirectRateLimiter<DefaultClock>, goal: u32) -> u32 {
     if goal <= 2 {
         let clock = DefaultClock::default();
