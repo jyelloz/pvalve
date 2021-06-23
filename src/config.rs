@@ -11,7 +11,32 @@ use watch::{
 #[derive(Default, Debug, Clone)]
 pub struct Config {
     pub limit: Option<NonZeroU32>,
+    pub unit: Unit,
 }
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub enum Unit {
+    Byte,
+    Line,
+    Null,
+}
+
+impl Default for Unit {
+    fn default() -> Self {
+        Self::Byte
+    }
+}
+
+impl Unit {
+    pub fn cycle(&mut self) {
+        *self = match self {
+            Self::Byte => Self::Line,
+            Self::Line => Self::Null,
+            Self::Null => Self::Byte,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ConfigMonitor(WatchReceiver<Config>);
 
@@ -43,6 +68,9 @@ impl ConfigMonitor {
         self.0
             .get()
             .limit()
+    }
+    pub fn unit(&mut self) -> Unit {
+        self.0.get().unit
     }
 }
 
