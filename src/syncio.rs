@@ -179,33 +179,10 @@ impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
 
     fn annotate(&mut self, buf: &[u8]) -> Vec<usize> {
         match self.config.unit() {
-            Unit::Byte => Self::annotate_bytes(buf),
-            Unit::Line => Self::annotate_lines(buf),
-            Unit::Null => Self::annotate_nulls(buf),
+            Unit::Byte => annotate_bytes(buf),
+            Unit::Line => annotate_lines(buf),
+            Unit::Null => annotate_nulls(buf),
         }
-    }
-
-    fn annotate_bytes(buf: &[u8]) -> Vec<usize> {
-        buf.iter()
-            .enumerate()
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    fn annotate_lines(buf: &[u8]) -> Vec<usize> {
-        buf.iter()
-            .enumerate()
-            .filter(|(_, b)| LF == **b)
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    fn annotate_nulls(buf: &[u8]) -> Vec<usize> {
-        buf.iter()
-            .enumerate()
-            .filter(|(_, b)| NUL == **b)
-            .map(|(i, _)| i)
-            .collect()
     }
 
     fn set_rate(&mut self, rate: NonZeroU32) {
@@ -233,6 +210,29 @@ impl <W: Write> Write for RateLimitedWriter<W, DynamicRateLimiter> {
     fn flush(&mut self) -> Result<()> {
         self.inner.flush()
     }
+}
+
+fn annotate_bytes(buf: &[u8]) -> Vec<usize> {
+    buf.iter()
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn annotate_lines(buf: &[u8]) -> Vec<usize> {
+    buf.iter()
+        .enumerate()
+        .filter(|(_, b)| LF == **b)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn annotate_nulls(buf: &[u8]) -> Vec<usize> {
+    buf.iter()
+        .enumerate()
+        .filter(|(_, b)| NUL == **b)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Should never take more than ~32 recursive steps to terminate.
