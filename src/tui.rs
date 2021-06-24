@@ -38,7 +38,10 @@ use watch::WatchSender;
 
 use super::{
     config::{Config, Latch, LatchMonitor, Unit},
-    progress::{ProgressView, ProgressCounter},
+    progress::{
+        TransferProgress,
+        TransferProgressMonitor,
+    }
 };
 
 #[derive(Debug, Error)]
@@ -111,11 +114,11 @@ type CrossTerminal = Terminal<CrosstermBackend<File>>;
 pub struct UserInterface {
     terminal: CrossTerminal,
     shutdown: LatchMonitor,
-    progress: ProgressCounter,
     config: Config,
     config_tx: WatchSender<Config>,
     paused: Latch,
     aborted: Latch,
+    progress: TransferProgressMonitor,
 }
 
 pub struct Cleanup();
@@ -138,7 +141,7 @@ impl UserInterface {
         aborted: Latch,
         shutdown: LatchMonitor,
         config: Config,
-        progress: ProgressCounter,
+        progress: TransferProgressMonitor,
         config_tx: WatchSender<Config>,
     ) -> Result<Self> {
         let backend = Self::initialize_backend()?;
@@ -245,9 +248,8 @@ impl UserInterface {
                 break;
             }
             let progress_view = ProgressView {
-                bytes_transferred: self.progress.get(),
                 start_time,
-                ..Default::default()
+                progress: self.progress.get(),
             };
             let config = self.config.clone();
             let paused = self.paused.active();
@@ -322,7 +324,10 @@ impl UserInterface {
         let pause = if paused { "[PAUSED]" } else { "" };
         let limit = SizeFormatterBinary::new(config.limit().get() as u64);
         let ProgressView {
-            bytes_transferred,
+            progress: TransferProgress {
+                bytes_transferred,
+                ..
+            },
             ..
         } = progress;
 
@@ -407,5 +412,16 @@ fn format_duration(duration: Duration) -> String {
 impl Drop for UserInterface {
     fn drop(&mut self) {
         Cleanup();
+    }
+}
+
+struct ProgressView {
+    start_time: Instant,
+    progress: TransferProgress,
+}
+
+impl ProgressView {
+    fn elapsed(&self) -> Duration {
+        self.start_time.elapsed()
     }
 }
