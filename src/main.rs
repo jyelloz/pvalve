@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
             aborted,
             shutdown.watch(),
             config.clone(),
-            stdout.bytes_transferred(),
+            stdout.transfer_progress(),
             config_tx,
         )?;
         Some(thread::spawn(|| ui.run(Instant::now())))
