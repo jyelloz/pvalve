@@ -181,13 +181,13 @@ impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
     fn get_largest_slice<'a>(&mut self, buf: &'a [u8]) -> &'a [u8] {
         let points = self.annotate(buf);
         let buffer_cost = points.len().min(u32::MAX as usize) as u32;
-        let end = if buffer_cost < 1 {
-            buf.len()
+        let tokens_granted = self.rate_limiter.request(buffer_cost);
+        if buffer_cost <= tokens_granted {
+            buf
         } else {
-            let allowable_tokens = self.rate_limiter.request(buffer_cost);
-            points[allowable_tokens as usize - 1] + 1
-        };
-        &buf[..end]
+            let end = points[tokens_granted as usize];
+            &buf[..end]
+        }
     }
 
     fn annotate(&mut self, buf: &[u8]) -> Vec<usize> {
