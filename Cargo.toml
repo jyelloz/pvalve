@@ -15,7 +15,6 @@ thiserror = "1"
 chrono = "0.4"
 size_format = "1"
 gumdrop = "0.8"
-sum-queue = "0.1"
 watch = "0.2"
 [dependencies.governor]
 version = "0.3"
