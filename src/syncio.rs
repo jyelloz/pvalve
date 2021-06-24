@@ -6,13 +6,6 @@ use std::{
         Write,
     },
     num::NonZeroU32,
-    sync::{
-        Arc,
-        atomic::{
-            AtomicUsize,
-            Ordering,
-        },
-    },
     thread::sleep,
     time::Duration,
 };
@@ -31,8 +24,16 @@ use governor::{
     RateLimiter as GovernorRateLimiter,
 };
 
+use watch::{
+    channel,
+    WatchSender,
+};
+
 use crate::{
-    progress::ProgressCounter,
+    progress::{
+        TransferProgress,
+        TransferProgressMonitor,
+    },
     config::{
         ConfigMonitor,
         LatchMonitor,
@@ -56,12 +57,7 @@ pub trait WriteExt<W> {
 
 impl <W: Write> WriteExt<W> for W {
     fn progress(self) -> ProgressWriter<W> {
-        ProgressWriter {
-            inner: self,
-            bytes_transferred: Arc::new(AtomicUsize::new(0)),
-            lines_transferred: Arc::new(AtomicUsize::new(0)),
-            nulls_transferred: Arc::new(AtomicUsize::new(0)),
-        }
+        ProgressWriter::new(self)
     }
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W> {
         PauseableWriter {
@@ -80,17 +76,25 @@ impl <W: Write> WriteExt<W> for W {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ProgressWriter<W> {
     inner: W,
-    bytes_transferred: Arc<AtomicUsize>,
-    lines_transferred: Arc<AtomicUsize>,
-    nulls_transferred: Arc<AtomicUsize>,
+    transfer_progress: TransferProgress,
+    tx: WatchSender<TransferProgress>,
 }
 
 impl <W> ProgressWriter<W> {
-    pub fn bytes_transferred(&self) -> ProgressCounter {
-        ProgressCounter::new(self.bytes_transferred.clone())
+    fn new(inner: W) -> Self {
+        let transfer_progress = TransferProgress::default();
+        let (tx, _) = channel(transfer_progress);
+        Self {
+            inner,
+            transfer_progress,
+            tx,
+        }
+    }
+    pub fn transfer_progress(&mut self) -> TransferProgressMonitor {
+        TransferProgressMonitor::new(self.tx.subscribe())
     }
 }
 
@@ -98,11 +102,10 @@ impl <W: Write> Write for ProgressWriter<W> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let bytes_transferred = self.inner.write(buf)?;
         let slice = &buf[..bytes_transferred];
-        let lines_transferred = annotate_lines(slice).len();
-        let nulls_transferred = annotate_nulls(slice).len();
-        self.bytes_transferred.fetch_add(bytes_transferred, Ordering::Relaxed);
-        self.lines_transferred.fetch_add(lines_transferred, Ordering::Relaxed);
-        self.nulls_transferred.fetch_add(nulls_transferred, Ordering::Relaxed);
+        self.transfer_progress.add_bytes(bytes_transferred);
+        self.transfer_progress.add_lines(annotate_lines(slice).len());
+        self.transfer_progress.add_nulls(annotate_nulls(slice).len());
+        self.tx.send(self.transfer_progress);
         Ok(bytes_transferred)
     }
     fn flush(&mut self) -> Result<()> {
@@ -115,8 +118,6 @@ type DirectRateLimiter<C> = GovernorRateLimiter<NotKeyed, InMemoryState, C>;
 pub struct RateLimitedWriter<W, R> {
     inner: W,
     config: ConfigMonitor,
-    // unit: Unit,
-    // rate_limit: Option<NonZeroU32>,
     rate_limiter: R,
 }
 
