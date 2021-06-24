@@ -156,6 +156,9 @@ impl DynamicRateLimiter {
 
 impl RateLimiter for DynamicRateLimiter {
     fn request(&mut self, tokens: u32) -> u32 {
+        if tokens < 1 {
+            return 0;
+        }
         if let Some(limiter) = &mut self.limiter {
             wait_for_at_most(limiter, tokens)
         } else {
