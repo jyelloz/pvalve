@@ -334,3 +334,48 @@ impl <W: Write> Write for CancellableWriter<W> {
         self.inner.flush()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotate_bytes_returns_buffer_length() {
+        use std::iter::repeat;
+        let buf: Vec<u8> = repeat(NUL)
+            .take(10)
+            .chain(repeat(LF).take(10))
+            .collect();
+        assert_eq!(
+            annotate_bytes(&buf).len(),
+            buf.len(),
+        );
+    }
+
+    #[test]
+    fn annotate_lines_returns_number_of_linefeeds() {
+        use std::iter::repeat;
+        let buf: Vec<u8> = repeat(LF)
+            .take(10)
+            .chain(vec![NUL].into_iter())
+            .collect();
+        assert_eq!(
+            annotate_lines(&buf).len(),
+            10,
+        );
+    }
+
+    #[test]
+    fn annotate_nulls_returns_number_of_nulls() {
+        use std::iter::repeat;
+        let buf: Vec<u8> = repeat(NUL)
+            .take(10)
+            .chain(vec![LF].into_iter())
+            .collect();
+        assert_eq!(
+            annotate_nulls(&buf).len(),
+            10,
+        );
+    }
+
+}
