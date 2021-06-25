@@ -1,4 +1,3 @@
-use nonzero_ext::nonzero;
 use std::{
     io::{self, copy},
     time::Instant,
@@ -20,14 +19,12 @@ use pvalve::{
 fn main() -> anyhow::Result<()> {
     let invo = Opts::parse_process_args();
 
-    let rate = invo.speed.map(|s| s.0).unwrap_or(nonzero!(1u32));
+    let limit = invo.speed.map(|s| s.0);
+    let unit = invo.unit;
 
-    let config = Config {
-        limit: Some(rate),
-        ..Default::default()
-    };
+    let config = Config { limit, unit };
 
-    let (config_tx, config_rx) = ConfigMonitor::new(config.clone());
+    let (config_tx, config_rx) = ConfigMonitor::new(config);
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -46,7 +43,7 @@ fn main() -> anyhow::Result<()> {
             paused,
             aborted,
             shutdown.watch(),
-            config.clone(),
+            config,
             stdout.transfer_progress(),
             config_tx,
         )?;
