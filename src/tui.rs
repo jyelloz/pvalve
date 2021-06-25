@@ -188,6 +188,10 @@ impl UserInterface {
                         ..
                     })) => { self.cycle_unit(); },
                     Event::Input(InputEvent::Key(KeyEvent {
+                        code: KeyCode::Char('`'),
+                        ..
+                    })) => { self.toggle_speed_limit(); },
+                    Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Left,
                         ..
                     })) => {
@@ -255,7 +259,7 @@ impl UserInterface {
                 start_time,
                 progress: self.progress.get(),
             };
-            let config = self.config.clone();
+            let config = self.config;
             let paused = self.paused.active();
             self.terminal.draw(|f| Self::draw(
                     f,
@@ -273,12 +277,17 @@ impl UserInterface {
         self.paused.toggle();
     }
 
+    fn toggle_speed_limit(&mut self) {
+        self.config.toggle_limit();
+        self.config_tx.send(self.config);
+    }
+
     fn set_limit(&mut self, limit: Option<NonZeroU32>) {
         self.config = Config {
             limit: limit.into(),
             ..self.config
         };
-        self.config_tx.send(self.config.clone());
+        self.config_tx.send(self.config);
     }
 
     fn increase_rate(&mut self) {
@@ -293,7 +302,7 @@ impl UserInterface {
 
     fn cycle_unit(&mut self) {
         self.config.unit.cycle();
-        self.config_tx.send(self.config.clone());
+        self.config_tx.send(self.config);
     }
 
     fn draw<B: Backend>(
