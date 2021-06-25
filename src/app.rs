@@ -1,34 +1,14 @@
 use std::num::NonZeroU32;
 
+use super::config::Config;
+
 #[derive(Debug)]
 pub enum Event {
     Tick,
     Key,
 }
 
-#[derive(Clone,Debug)]
-pub enum Unit {
-    /// Limit applies at the bytes/second level. Useful for text or binary data.
-    Byte,
-    /// Limit applies at the lines/second level. Useful for text data.
-    Line,
-    /// Limit applies to items/second. Useful for null-separated data.
-    Null,
-}
-
-impl Default for Unit {
-    fn default() -> Self {
-        Unit::Byte
-    }
-}
-
-#[derive(Clone,Debug,Default)]
-pub struct Config {
-    rate: Option<NonZeroU32>,
-    unit: Unit,
-}
-
-#[derive(Clone,Debug,Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Progress {
     pub bytes_transferred: usize,
     pub records_transferred: usize,
@@ -115,10 +95,10 @@ impl PipeValveNew {
             progress: Default::default(),
         }
     }
-    pub fn set_rate(self, rate: Option<NonZeroU32>) -> PipeValveNew {
+    pub fn set_limit(self, limit: Option<NonZeroU32>) -> PipeValveNew {
         Self {
             config: Config {
-                rate,
+                limit,
                 ..self.config
             },
         }
@@ -158,19 +138,19 @@ impl PipeValvePaused {
 
 impl Configured for PipeValveNew {
     fn config(&self) -> Config {
-        self.config.clone()
+        self.config
     }
 }
 
 impl Configured for PipeValvePaused {
     fn config(&self) -> Config {
-        self.config.clone()
+        self.config
     }
 }
 
 impl Configured for PipeValveRunning {
     fn config(&self) -> Config {
-        self.config.clone()
+        self.config
     }
 }
 
