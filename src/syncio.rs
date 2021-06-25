@@ -202,16 +202,22 @@ impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
         self.rate_limiter.swapout(rate.into());
     }
 
-    fn poll_for_config_update(&mut self) {
+    fn poll_for_config_update(&mut self) -> Option<NonZeroU32> {
         if let Some(new_rate) = self.config.limit_if_new() {
             self.set_rate(new_rate);
+            Some(new_rate)
+        } else {
+            self.config.limit()
         }
     }
 }
 
 impl <W: Write> Write for RateLimitedWriter<W, DynamicRateLimiter> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.poll_for_config_update();
+        let limit = self.poll_for_config_update();
+        if limit.is_none() {
+            return self.inner.write(buf);
+        }
         let slice = self.get_largest_slice(buf);
         let bytes_transferred = self.inner.write(slice)?;
         if bytes_transferred < buf.len() {
