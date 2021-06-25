@@ -19,7 +19,7 @@ use pvalve::{
 fn main() -> anyhow::Result<()> {
     let invo = Opts::parse_process_args();
 
-    let limit = invo.speed.map(|s| s.0);
+    let limit = invo.speed.map(|s| s.0).into();
     let unit = invo.unit;
 
     let config = Config { limit, unit };

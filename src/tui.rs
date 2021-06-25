@@ -89,24 +89,30 @@ impl Iterator for Events {
     }
 }
 
-fn checked_add(value: NonZeroU32, increment: u32) -> NonZeroU32 {
-    value
-        .get()
-        .checked_add(increment)
-        .map(|n| n - (n % increment))
-        .map(|n| 1.max(n))
-        .and_then(NonZeroU32::new)
-        .unwrap_or(value)
+fn checked_add(value: Option<NonZeroU32>, increment: u32) -> Option<NonZeroU32> {
+    if let Some(value) = value {
+        value
+            .get()
+            .checked_add(increment)
+            .map(|n| n - (n % increment))
+            .map(|n| 1.max(n))
+            .and_then(NonZeroU32::new)
+    } else {
+        None
+    }
 }
 
-fn checked_sub(value: NonZeroU32, increment: u32) -> NonZeroU32 {
-    value
-        .get()
-        .checked_sub(increment)
-        .map(|n| n - (n % increment))
-        .map(|n| 1.max(n))
-        .and_then(NonZeroU32::new)
-        .unwrap_or(value)
+fn checked_sub(value: Option<NonZeroU32>, increment: u32) -> Option<NonZeroU32> {
+    if let Some(value) = value {
+        value
+            .get()
+            .checked_sub(increment)
+            .map(|n| n - (n % increment))
+            .map(|n| 1.max(n))
+            .and_then(NonZeroU32::new)
+    } else {
+        None
+    }
 }
 
 type CrossTerminal = Terminal<CrosstermBackend<File>>;
@@ -236,9 +242,7 @@ impl UserInterface {
                             .ok()
                             .and_then(NonZeroU32::new);
                         input.clear();
-                        if let Some(new_rate) = new_rate {
-                            self.set_limit(new_rate);
-                        }
+                        self.set_limit(new_rate);
                         mode = TuiMode::Progress;
                     },
                     _ => {},
@@ -269,9 +273,9 @@ impl UserInterface {
         self.paused.toggle();
     }
 
-    fn set_limit(&mut self, limit: NonZeroU32) {
+    fn set_limit(&mut self, limit: Option<NonZeroU32>) {
         self.config = Config {
-            limit: Some(limit),
+            limit: limit.into(),
             ..self.config
         };
         self.config_tx.send(self.config.clone());
@@ -322,7 +326,10 @@ impl UserInterface {
     ) {
 
         let pause = if paused { "[PAUSED]" } else { "" };
-        let limit = SizeFormatterBinary::new(config.limit().get() as u64);
+        let limit = config.limit();
+        let limit = limit
+            .map(|n| n.get() as u64)
+            .map(SizeFormatterBinary::new);
         let ProgressView {
             progress: TransferProgress {
                 bytes_transferred,
@@ -331,14 +338,24 @@ impl UserInterface {
             ..
         } = progress;
 
-        let unit_abbreviation = Self::abbreviate(config.unit);
-        let para = format!(
-            "{:.2}B {} [{:.2}{unit}/s]",
-            SizeFormatterBinary::new(bytes_transferred as u64),
-            format_duration(progress.elapsed()),
-            limit,
-            unit=unit_abbreviation,
-        );
+        let para = if let Some(limit) = limit {
+            let unit_abbreviation = Self::abbreviate(config.unit);
+            format!(
+                "{:.2}B {} [{:.2}{unit}/s] ({:?})",
+                SizeFormatterBinary::new(bytes_transferred as u64),
+                format_duration(progress.elapsed()),
+                limit,
+                progress.progress,
+                unit=unit_abbreviation,
+            )
+        } else {
+            format!(
+                "{:.2}B {} ({:?})",
+                SizeFormatterBinary::new(bytes_transferred as u64),
+                format_duration(progress.elapsed()),
+                progress.progress,
+            )
+        };
 
         let row = Rect {
             height: 1,

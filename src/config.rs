@@ -8,9 +8,15 @@ use watch::{
     channel,
 };
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SpeedLimit {
+    limit: NonZeroU32,
+    enabled: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
 pub struct Config {
-    pub limit: Option<NonZeroU32>,
+    pub limit: SpeedLimit,
     pub unit: Unit,
 }
 
@@ -20,6 +26,17 @@ pub enum Unit {
     Line,
     Null,
 }
+
+#[derive(Clone)]
+pub struct ConfigMonitor(WatchReceiver<Config>);
+
+#[derive(Clone)]
+pub struct Latch {
+    active: bool,
+    tx: WatchSender<bool>,
+}
+#[derive(Clone)]
+pub struct LatchMonitor(WatchReceiver<bool>);
 
 impl Default for Unit {
     fn default() -> Self {
@@ -37,20 +54,49 @@ impl Unit {
     }
 }
 
-#[derive(Clone)]
-pub struct ConfigMonitor(WatchReceiver<Config>);
-
-#[derive(Clone)]
-pub struct Latch {
-    active: bool,
-    tx: WatchSender<bool>,
+impl Default for SpeedLimit {
+    fn default() -> Self {
+        Self {
+            limit: nonzero!(1u32),
+            enabled: false,
+        }
+    }
 }
-#[derive(Clone)]
-pub struct LatchMonitor(WatchReceiver<bool>);
+
+impl SpeedLimit {
+    fn limit(&self) -> Option<NonZeroU32> {
+        if self.enabled {
+            Some(self.limit)
+        } else {
+            None
+        }
+    }
+    fn toggle(&mut self) -> bool {
+        let enabled = self.enabled;
+        self.enabled = !enabled;
+        enabled
+    }
+}
+
+impl From<Option<NonZeroU32>> for SpeedLimit {
+    fn from(limit: Option<NonZeroU32>) -> Self {
+        if let Some(limit) = limit {
+            Self {
+                limit,
+                enabled: true,
+            }
+        } else {
+            Self::default()
+        }
+    }
+}
 
 impl Config {
-    pub fn limit(&self) -> NonZeroU32 {
-        self.limit.unwrap_or(nonzero!(1u32))
+    pub fn limit(&self) -> Option<NonZeroU32> {
+        self.limit.limit()
+    }
+    pub fn toggle_limit(&mut self) -> bool {
+        self.limit.toggle()
     }
 }
 
@@ -62,9 +108,9 @@ impl ConfigMonitor {
     pub fn limit_if_new(&mut self) -> Option<NonZeroU32> {
         self.0
             .get_if_new()
-            .map(|config| config.limit())
+            .and_then(|config| config.limit())
     }
-    pub fn limit(&mut self) -> NonZeroU32 {
+    pub fn limit(&mut self) -> Option<NonZeroU32> {
         self.0
             .get()
             .limit()
