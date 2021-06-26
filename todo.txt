@@ -1,7 +1,7 @@
 x Decide whether async I/O framework is even necessary. (No, it is not).
 x Use a FIFO file instead of a normal file for controlling bandwidth. (WONTFIX)
 x Add line-oriented mode. +linemode
-Define command-line interface. +cli
+x Define command-line interface. +cli
 Add a man page.
 Add a readme.
 Add unit tests.
