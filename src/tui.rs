@@ -30,7 +30,10 @@ use crossterm::{
     execute, terminal,
 };
 
-use size_format::SizeFormatterBinary;
+use size_format::{
+    SizeFormatterBinary,
+    SizeFormatterSI,
+};
 
 use thiserror::Error;
 
@@ -85,6 +88,86 @@ impl Iterator for Events {
             }
             Ok(false) => Some(Event::Tick),
             _ => unreachable!("failed to iterate input events"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RestrictedTransferProgress(ProgressView, NonZeroU32, Unit);
+
+impl std::fmt::Display for RestrictedTransferProgress {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self(progress, limit, unit) = *self;
+        let bytes_transferred = progress.progress.bytes_transferred as u64;
+        let unit_abbreviation = abbreviate(unit);
+        let duration = format_duration(progress.elapsed());
+        let limit = limit.get() as u64;
+        match unit {
+            Unit::Byte => write!(
+                fmt,
+                "{:.2}B {} [{:.2}{unit}/s]",
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterBinary::new(limit),
+                unit=unit_abbreviation,
+            ),
+            Unit::Line => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
+                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterSI::new(limit),
+                unit=unit_abbreviation,
+            ),
+            Unit::Null => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
+                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterSI::new(limit),
+                unit=unit_abbreviation,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UnrestrictedTransferProgress(ProgressView, Unit);
+
+impl std::fmt::Display for UnrestrictedTransferProgress {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self(progress, unit) = *self;
+        let bytes_transferred = SizeFormatterBinary::new(
+            progress.progress.bytes_transferred as u64
+        );
+        let unit_abbreviation = abbreviate(unit);
+        let duration = format_duration(progress.elapsed());
+        match unit {
+            Unit::Byte => write!(
+                fmt,
+                "{:.2}{unit} {}",
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
+            Unit::Line => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {}",
+                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
+            Unit::Null => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {}",
+                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
         }
     }
 }
@@ -319,14 +402,6 @@ impl UserInterface {
         }
     }
 
-    fn abbreviate(unit: Unit) -> &'static str {
-        match unit {
-            Unit::Byte => "B",
-            Unit::Line => "L",
-            Unit::Null => "#",
-        }
-    }
-
     fn draw_progress_mode<B: Backend>(
         f: &mut Frame<B>,
         config: Config,
@@ -336,34 +411,12 @@ impl UserInterface {
 
         let pause = if paused { "[PAUSED]" } else { "" };
         let limit = config.limit();
-        let limit = limit
-            .map(|n| n.get() as u64)
-            .map(SizeFormatterBinary::new);
-        let ProgressView {
-            progress: TransferProgress {
-                bytes_transferred,
-                ..
-            },
-            ..
-        } = progress;
+        let unit = config.unit;
 
         let para = if let Some(limit) = limit {
-            let unit_abbreviation = Self::abbreviate(config.unit);
-            format!(
-                "{:.2}B {} [{:.2}{unit}/s] ({:?})",
-                SizeFormatterBinary::new(bytes_transferred as u64),
-                format_duration(progress.elapsed()),
-                limit,
-                progress.progress,
-                unit=unit_abbreviation,
-            )
+            format!("{}", RestrictedTransferProgress(progress, limit, unit))
         } else {
-            format!(
-                "{:.2}B {} ({:?})",
-                SizeFormatterBinary::new(bytes_transferred as u64),
-                format_duration(progress.elapsed()),
-                progress.progress,
-            )
+            format!("{}", UnrestrictedTransferProgress(progress, unit))
         };
 
         let row = Rect {
@@ -425,6 +478,14 @@ impl UserInterface {
 
 }
 
+fn abbreviate(unit: Unit) -> &'static str {
+    match unit {
+        Unit::Byte => "B",
+        Unit::Line => "L",
+        Unit::Null => "#",
+    }
+}
+
 fn format_duration(duration: Duration) -> String {
     let duration = chrono::Duration::from_std(duration).unwrap();
     format!(
@@ -441,6 +502,7 @@ impl Drop for UserInterface {
     }
 }
 
+#[derive(Clone, Copy)]
 struct ProgressView {
     start_time: Instant,
     progress: TransferProgress,
