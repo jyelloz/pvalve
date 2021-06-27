@@ -6,6 +6,7 @@ Add a man page.
 Add a readme.
 Add unit tests.
 Add a live control TUI. +tui
+Add capability to measure recent stream throughput. +io +tui
 x Add full-screen progress monitor UI +tui
 x Add small speed increase/decrease keybindings +tui\n
 x Add pause/resume keybindings +tui
