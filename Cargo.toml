@@ -16,6 +16,7 @@ chrono = "0.4"
 size_format = "1"
 gumdrop = "0.8"
 watch = "0.2"
+sum-queue = "1.0"
 [dependencies.governor]
 version = "0.3"
 features = []
