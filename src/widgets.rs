@@ -34,7 +34,10 @@ use size_format::{
 };
 
 use super::config::Unit;
-use super::progress::TransferProgress;
+use super::progress::{
+    CumulativeTransferProgress,
+    TransferProgress,
+};
 
 pub trait InteractiveWidget: Sized {
     fn render<B: Backend>(self, frame: &mut Frame<B>);
@@ -210,6 +213,152 @@ impl <'a> InteractiveWidget for EditRateView<'a> {
             frame.set_cursor(r.x + input_length, r.y);
             frame.render_widget(para, l);
             frame.render_widget(input, r);
+        }
+    }
+}
+
+fn abbreviate(unit: Unit) -> &'static str {
+    match unit {
+        Unit::Byte => "B",
+        Unit::Line => "L",
+        Unit::Null => "#",
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let duration = chrono::Duration::from_std(duration).unwrap();
+    format!(
+        "{}:{:02}:{:02}",
+        duration.num_hours(),
+        duration.num_minutes() % 60,
+        duration.num_seconds() % 60,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct RestrictedTransferProgress(CumulativeTransferProgress, NonZeroU32, Unit);
+
+impl std::fmt::Display for RestrictedTransferProgress {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self(progress, limit, unit) = *self;
+        let bytes_transferred = progress.progress.bytes_transferred as u64;
+        let unit_abbreviation = abbreviate(unit);
+        let duration = format_duration(progress.elapsed());
+        let limit = limit.get() as u64;
+        match unit {
+            Unit::Byte => write!(
+                fmt,
+                "{:.2}B {} [{:.2}{unit}/s]",
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterBinary::new(limit),
+                unit=unit_abbreviation,
+            ),
+            Unit::Line => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
+                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterSI::new(limit),
+                unit=unit_abbreviation,
+            ),
+            Unit::Null => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
+                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
+                SizeFormatterBinary::new(bytes_transferred),
+                duration,
+                SizeFormatterSI::new(limit),
+                unit=unit_abbreviation,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UnrestrictedTransferProgress(CumulativeTransferProgress, Unit);
+
+impl std::fmt::Display for UnrestrictedTransferProgress {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self(progress, unit) = *self;
+        let bytes_transferred = SizeFormatterBinary::new(
+            progress.progress.bytes_transferred as u64
+        );
+        let unit_abbreviation = abbreviate(unit);
+        let duration = format_duration(progress.elapsed());
+        match unit {
+            Unit::Byte => write!(
+                fmt,
+                "{:.2}{unit} {}",
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
+            Unit::Line => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {}",
+                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
+            Unit::Null => write!(
+                fmt,
+                "{:.2}{unit} ({}B) {}",
+                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
+                bytes_transferred,
+                duration,
+                unit=unit_abbreviation,
+            ),
+        }
+    }
+}
+
+pub struct TransferProgressView {
+    pub paused: bool,
+    pub limit: Option<NonZeroU32>,
+    pub unit: Unit,
+    pub progress: CumulativeTransferProgress,
+    pub instantaneous_progress: TransferProgress,
+}
+
+impl InteractiveWidget for TransferProgressView {
+    fn render<B: Backend>(self, frame: &mut Frame<B>) {
+        let Self { paused, limit, unit, progress, instantaneous_progress } = self;
+        let pause = if paused { "[PAUSED]" } else { "" };
+
+        let para = if let Some(limit) = limit {
+            format!("{}", RestrictedTransferProgress(progress, limit, unit))
+        } else {
+            format!("{}", UnrestrictedTransferProgress(progress, unit))
+        };
+
+        let row = Rect {
+            height: 1,
+            ..frame.size()
+        };
+
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(para.len() as u16),
+                Constraint::Max(1),
+                Constraint::Length(10),
+                Constraint::Length(pause.len() as u16),
+            ])
+            .split(row);
+
+        let progress = Paragraph::new(para);
+        let speed = ObservedRateView(instantaneous_progress, unit);
+        let pause = Paragraph::new(pause)
+            .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
+
+        if let [l, pad, c, r] = *layout {
+            frame.render_widget(progress, l);
+            frame.render_widget(Paragraph::new("-"), pad);
+            frame.render_widget(speed, c);
+            frame.render_widget(pause, r);
         }
     }
 }
