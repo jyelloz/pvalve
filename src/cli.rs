@@ -1,6 +1,6 @@
 use std::num::NonZeroU32;
 
-use gumdrop::Options;
+use clap::{AppSettings, Parser};
 
 use super::config::Unit;
 
@@ -27,30 +27,32 @@ pub struct Invocation {
     pub unit: Unit,
 }
 
-#[derive(Debug, Default, Clone, Copy, Options)]
+/// Pipe Valve - Monitor and control pipe throughput.
+#[derive(Debug, Default, Clone, Copy, Parser)]
+#[clap(version)]
+#[clap(global_setting(AppSettings::DeriveDisplayOrder))]
 pub struct Opts {
-    #[options(
-        short = "L",
-        help = "the maximum number of items to allow through per second",
+    #[clap(
+        short = 'L',
+        help = "Limit the throughput of the transfer.",
     )]
     speed_limit: Option<Speed>,
-    #[options(
-        short = "l",
-        help = "enable line-oriented mode where measurements apply to lines, not bytes",
+    #[clap(
+        short = 'l',
+        help = "Measurements apply to line-separated records.",
     )]
     line_mode: bool,
-    #[options(
-        short = "0",
+    #[clap(
+        short = '0',
         long = "null",
-        help = "similar to line-oriented mode, except the lines are NUL-separated"
+        help = "Measurements apply to null-separated records.",
     )]
     null_mode: bool,
-    help: bool,
 }
 
 impl Opts {
     pub fn parse_process_args() -> Invocation {
-        let opts = Self::parse_args_default_or_exit();
+        let opts = Self::parse();
         opts.into()
     }
 }
@@ -80,42 +82,44 @@ impl From<Opts> for Invocation {
 mod tests {
     use super::*;
     type Result = anyhow::Result<()>;
+
+    fn parse(args: &[&str]) -> anyhow::Result<Invocation> {
+        let args = [&["pvalve"][..], args].concat();
+        let invo = Opts::try_parse_from(args)?;
+        Ok(invo.into())
+    }
+
     #[test]
     fn when__unit_not_selected__then__bytes_is_used() -> Result {
-        let opts = Opts::parse_args_default::<&str>(&[])?;
-        let unit = Invocation::from(opts).unit;
+        let Invocation { unit, .. } = parse(&[])?;
         assert_eq!(unit, Unit::Byte);
         Ok(())
     }
 
     #[test]
     fn when__line_unit_selected__then__line_is_used() -> Result {
-        let opts = Opts::parse_args_default(&["-l"])?;
-        let unit = Invocation::from(opts).unit;
+        let Invocation { unit, .. } = parse(&["-l"])?;
         assert_eq!(unit, Unit::Line);
         Ok(())
     }
 
     #[test]
     fn when__null_unit_selected__then__null_is_used() -> Result {
-        let opts = Opts::parse_args_default(&["-0"])?;
-        let unit = Invocation::from(opts).unit;
+        let Invocation { unit, .. } = parse(&["-0"])?;
         assert_eq!(unit, Unit::Null);
         Ok(())
     }
 
     #[test]
     fn when__line_and_null_units_selected__then__null_is_used() -> Result {
-        let opts = Opts::parse_args_default(&["-l", "-0"])?;
-        let unit = Invocation::from(opts).unit;
+        let Invocation { unit, .. } = parse(&["-l", "-0"])?;
         assert_eq!(unit, Unit::Null);
         Ok(())
     }
 
     #[test]
     fn when__null_and_line_units_selected__then__null_is_used() -> Result {
-        let opts = Opts::parse_args_default(&["-0", "-l"])?;
-        let unit = Invocation::from(opts).unit;
+        let Invocation { unit, .. } = parse(&["-0", "-l"])?;
         assert_eq!(unit, Unit::Null);
         Ok(())
     }
