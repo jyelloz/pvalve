@@ -88,14 +88,8 @@ pub struct DurationView(Duration);
 
 impl DurationView {
     fn text(&self) -> String {
-        let duration = chrono::Duration::from_std(self.0)
-            .unwrap();
-        format!(
-            "{}:{:02}:{:02}",
-            duration.num_hours(),
-            duration.num_minutes() % 60,
-            duration.num_seconds() % 60,
-        )
+        let Self(duration) = self;
+        format_duration(duration)
     }
 }
 
@@ -225,14 +219,12 @@ fn abbreviate(unit: Unit) -> &'static str {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
-    let duration = chrono::Duration::from_std(duration).unwrap();
-    format!(
-        "{}:{:02}:{:02}",
-        duration.num_hours(),
-        duration.num_minutes() % 60,
-        duration.num_seconds() % 60,
-    )
+fn format_duration(duration: &Duration) -> String {
+    let secs = duration.as_secs();
+    let hours = secs / 3600;
+    let minutes = (secs / 60) % 60;
+    let seconds = secs % 60;
+    format!("{}:{:02}:{:02}", hours, minutes, seconds)
 }
 
 #[derive(Clone, Copy)]
@@ -243,7 +235,7 @@ impl std::fmt::Display for RestrictedTransferProgress {
         let Self(progress, limit, unit) = *self;
         let bytes_transferred = progress.progress.bytes_transferred as u64;
         let unit_abbreviation = abbreviate(unit);
-        let duration = format_duration(progress.elapsed());
+        let duration = format_duration(&progress.elapsed());
         let limit = limit.get() as u64;
         match unit {
             Unit::Byte => write!(
@@ -286,7 +278,7 @@ impl std::fmt::Display for UnrestrictedTransferProgress {
             progress.progress.bytes_transferred as u64
         );
         let unit_abbreviation = abbreviate(unit);
-        let duration = format_duration(progress.elapsed());
+        let duration = format_duration(&progress.elapsed());
         match unit {
             Unit::Byte => write!(
                 fmt,
