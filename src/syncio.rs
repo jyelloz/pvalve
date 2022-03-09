@@ -39,6 +39,7 @@ use crate::{
         LatchMonitor,
         Unit,
     },
+    instantaneous::InstantaneousProgressWriter,
 };
 
 const NUL: u8 = 0x0;
@@ -47,6 +48,8 @@ const LF: u8 = 0xA;
 pub trait WriteExt<W> {
     /// Wrap any writer into one which can report progress.
     fn progress(self) -> ProgressWriter<W>;
+    /// Wrap any writer into one which reports instantaneous transfer rates.
+    fn instantaneous(self, window: Duration) -> InstantaneousProgressWriter<W>;
     /// Wrap any writer into one which can be paused and resumed.
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W>;
     /// Wrap any writer into one which can be cancelled.
@@ -58,6 +61,9 @@ pub trait WriteExt<W> {
 impl <W: Write> WriteExt<W> for W {
     fn progress(self) -> ProgressWriter<W> {
         ProgressWriter::new(self)
+    }
+    fn instantaneous(self, window: Duration) -> InstantaneousProgressWriter<W> {
+        InstantaneousProgressWriter::new(self, window)
     }
     fn pauseable(self, paused: LatchMonitor) -> PauseableWriter<W> {
         PauseableWriter {
