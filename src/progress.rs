@@ -1,3 +1,7 @@
+use std::time::{
+    Duration,
+    Instant,
+};
 use watch::WatchReceiver;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
@@ -38,5 +42,17 @@ impl TransferProgressMonitor {
     }
     pub fn get(&mut self) -> TransferProgress {
         self.0.get()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CumulativeTransferProgress {
+    pub start_time: Instant,
+    pub progress: TransferProgress,
+}
+
+impl CumulativeTransferProgress {
+    pub fn elapsed(&self) -> Duration {
+        self.start_time.elapsed()
     }
 }
