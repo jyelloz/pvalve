@@ -43,8 +43,6 @@ use super::{
 pub enum UserInterfaceError {
     #[error("I/O error talking to terminal")]
     IO(#[from] io::Error),
-    #[error("I/O error talking to terminal")]
-    Crossterm(#[from] crossterm::ErrorKind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
