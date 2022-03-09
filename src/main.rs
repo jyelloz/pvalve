@@ -37,14 +37,18 @@ fn main() -> anyhow::Result<()> {
     let mut stdout = stdout.limited(config_rx)
         .pauseable(paused.watch())
         .cancellable(aborted.watch())
-        .progress();
+        .instantaneous(std::time::Duration::from_secs(1));
+    let instantaneous_progress = stdout.transfer_progress();
+    let mut stdout = stdout.progress();
+    let absolute_progress = stdout.transfer_progress();
     let ui = if interactive_mode {
         let ui = UserInterface::new(
             paused,
             aborted,
             shutdown.watch(),
             config,
-            stdout.transfer_progress(),
+            absolute_progress,
+            instantaneous_progress,
             config_tx,
         )?;
         Some(thread::spawn(|| ui.run(Instant::now())))
