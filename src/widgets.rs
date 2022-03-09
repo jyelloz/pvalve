@@ -319,19 +319,19 @@ pub struct TransferProgressView {
     pub paused: bool,
     pub limit: Option<NonZeroU32>,
     pub unit: Unit,
-    pub progress: CumulativeTransferProgress,
-    pub instantaneous_progress: TransferProgress,
+    pub cumulative: CumulativeTransferProgress,
+    pub instantaneous: TransferProgress,
 }
 
 impl InteractiveWidget for TransferProgressView {
     fn render<B: Backend>(self, frame: &mut Frame<B>) {
-        let Self { paused, limit, unit, progress, instantaneous_progress } = self;
+        let Self { paused, limit, unit, cumulative, instantaneous } = self;
         let pause = if paused { "[PAUSED]" } else { "" };
 
         let para = if let Some(limit) = limit {
-            format!("{}", RestrictedTransferProgress(progress, limit, unit))
+            format!("{}", RestrictedTransferProgress(cumulative, limit, unit))
         } else {
-            format!("{}", UnrestrictedTransferProgress(progress, unit))
+            format!("{}", UnrestrictedTransferProgress(cumulative, unit))
         };
 
         let row = Rect {
@@ -350,7 +350,7 @@ impl InteractiveWidget for TransferProgressView {
             .split(row);
 
         let progress = Paragraph::new(para);
-        let speed = ObservedRateView(instantaneous_progress, unit);
+        let speed = ObservedRateView(instantaneous, unit);
         let pause = Paragraph::new(pause)
             .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
 
