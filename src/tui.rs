@@ -10,19 +10,8 @@ use std::{
 
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::{
-        Rect,
-        Layout,
-        Constraint,
-        Direction,
-    },
-    widgets::Paragraph,
-    style::{
-        Style,
-        Color,
-        Modifier,
-    },
-    Frame, Terminal,
+    Frame,
+    Terminal,
 };
 
 use crossterm::{
@@ -30,21 +19,24 @@ use crossterm::{
     execute, terminal,
 };
 
-use size_format::{
-    SizeFormatterBinary,
-    SizeFormatterSI,
-};
-
 use thiserror::Error;
 
 use watch::WatchSender;
 
 use super::{
-    config::{Config, Latch, LatchMonitor, Unit},
+    config::{Config, Latch, LatchMonitor},
     progress::{
         TransferProgress,
         TransferProgressMonitor,
-    }
+        CumulativeTransferProgress,
+    },
+    widgets::{
+        InteractiveWidget as _,
+        KeyboardInput as _,
+        EditRateView,
+        EditRateState,
+        TransferProgressView,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -92,86 +84,6 @@ impl Iterator for Events {
     }
 }
 
-#[derive(Clone, Copy)]
-struct RestrictedTransferProgress(ProgressView, NonZeroU32, Unit);
-
-impl std::fmt::Display for RestrictedTransferProgress {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self(progress, limit, unit) = *self;
-        let bytes_transferred = progress.progress.bytes_transferred as u64;
-        let unit_abbreviation = abbreviate(unit);
-        let duration = format_duration(progress.elapsed());
-        let limit = limit.get() as u64;
-        match unit {
-            Unit::Byte => write!(
-                fmt,
-                "{:.2}B {} [{:.2}{unit}/s]",
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterBinary::new(limit),
-                unit=unit_abbreviation,
-            ),
-            Unit::Line => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
-                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterSI::new(limit),
-                unit=unit_abbreviation,
-            ),
-            Unit::Null => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
-                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterSI::new(limit),
-                unit=unit_abbreviation,
-            ),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct UnrestrictedTransferProgress(ProgressView, Unit);
-
-impl std::fmt::Display for UnrestrictedTransferProgress {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self(progress, unit) = *self;
-        let bytes_transferred = SizeFormatterBinary::new(
-            progress.progress.bytes_transferred as u64
-        );
-        let unit_abbreviation = abbreviate(unit);
-        let duration = format_duration(progress.elapsed());
-        match unit {
-            Unit::Byte => write!(
-                fmt,
-                "{:.2}{unit} {}",
-                bytes_transferred,
-                duration,
-                unit=unit_abbreviation,
-            ),
-            Unit::Line => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {}",
-                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
-                bytes_transferred,
-                duration,
-                unit=unit_abbreviation,
-            ),
-            Unit::Null => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {}",
-                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
-                bytes_transferred,
-                duration,
-                unit=unit_abbreviation,
-            ),
-        }
-    }
-}
-
 fn checked_add(value: Option<NonZeroU32>, increment: u32) -> Option<NonZeroU32> {
     if let Some(value) = value {
         value
@@ -207,7 +119,8 @@ pub struct UserInterface {
     config_tx: WatchSender<Config>,
     paused: Latch,
     aborted: Latch,
-    progress: TransferProgressMonitor,
+    cumulative: TransferProgressMonitor,
+    instantaneous: TransferProgressMonitor,
 }
 
 pub struct Cleanup();
@@ -230,7 +143,8 @@ impl UserInterface {
         aborted: Latch,
         shutdown: LatchMonitor,
         config: Config,
-        progress: TransferProgressMonitor,
+        cumulative: TransferProgressMonitor,
+        instantaneous: TransferProgressMonitor,
         config_tx: WatchSender<Config>,
     ) -> Result<Self> {
         let backend = Self::initialize_backend()?;
@@ -239,10 +153,11 @@ impl UserInterface {
             terminal,
             shutdown,
             config,
-            progress,
             config_tx,
             paused,
             aborted,
+            cumulative,
+            instantaneous,
         })
     }
     fn initialize_backend() -> Result<CrosstermBackend<File>> {
@@ -255,7 +170,7 @@ impl UserInterface {
     pub fn run(mut self, start_time: Instant) -> Result<Cleanup> {
         let events = iter::once(Event::Tick).chain(Events);
         let mut mode = TuiMode::Progress;
-        let mut input = String::new();
+        let mut rate = EditRateState::new();
         self.terminal.clear()?;
         for event in events {
             match mode {
@@ -301,56 +216,32 @@ impl UserInterface {
                     },
                     _ => {},
                 },
-                TuiMode::Edit => match event {
-                    Event::Input(InputEvent::Key(KeyEvent {
-                        code: KeyCode::Esc,
-                        ..
-                    })) => {
-                        input.clear();
+                TuiMode::Edit => if let Event::Input(event) = event {
+                    if let Some(rate) = rate.input(event) {
+                        let rate: Option<NonZeroU32> = rate.into();
+                        self.set_limit(rate);
                         mode = TuiMode::Progress;
-                    },
-                    Event::Input(InputEvent::Key(KeyEvent {
-                        code: KeyCode::Char(code @ '0'..='9'),
-                        ..
-                    })) => {
-                        input.push(code);
-                    },
-                    Event::Input(InputEvent::Key(KeyEvent {
-                        code: KeyCode::Backspace,
-                        ..
-                    })) => {
-                        input.pop();
-                    },
-                    Event::Input(InputEvent::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        ..
-                    })) => {
-                        let new_rate = u32::from_str_radix(&input, 10)
-                            .ok()
-                            .and_then(NonZeroU32::new);
-                        input.clear();
-                        self.set_limit(new_rate);
-                        mode = TuiMode::Progress;
-                    },
-                    _ => {},
+                    }
                 },
             }
             if self.shutdown.active() {
                 break;
             }
-            let progress_view = ProgressView {
+            let cumulative_progress = CumulativeTransferProgress {
                 start_time,
-                progress: self.progress.get(),
+                progress: self.cumulative.get(),
             };
             let config = self.config;
             let paused = self.paused.active();
+            let speed = self.instantaneous.get();
             self.terminal.draw(|f| Self::draw(
                     f,
                     mode,
                     config,
                     paused,
-                    progress_view,
-                    &input,
+                    cumulative_progress,
+                    speed,
+                    rate.borrow(),
             ))?;
         }
         Ok(Cleanup())
@@ -389,127 +280,30 @@ impl UserInterface {
     }
 
     fn draw<B: Backend>(
-        f: &mut Frame<B>,
+        frame: &mut Frame<B>,
         mode: TuiMode,
         config: Config,
         paused: bool,
-        progress: ProgressView,
+        cumulative: CumulativeTransferProgress,
+        instantaneous: TransferProgress,
         input: &str,
     ) {
         match mode {
-            TuiMode::Progress => Self::draw_progress_mode(f, config, paused, progress),
-            TuiMode::Edit => Self::draw_update_mode(f, &input),
+            TuiMode::Progress => TransferProgressView {
+                paused,
+                unit: config.unit,
+                limit: config.limit(),
+                cumulative,
+                instantaneous,
+            }.render(frame),
+            TuiMode::Edit => EditRateView(input).render(frame),
         }
     }
 
-    fn draw_progress_mode<B: Backend>(
-        f: &mut Frame<B>,
-        config: Config,
-        paused: bool,
-        progress: ProgressView
-    ) {
-
-        let pause = if paused { "[PAUSED]" } else { "" };
-        let limit = config.limit();
-        let unit = config.unit;
-
-        let para = if let Some(limit) = limit {
-            format!("{}", RestrictedTransferProgress(progress, limit, unit))
-        } else {
-            format!("{}", UnrestrictedTransferProgress(progress, unit))
-        };
-
-        let row = Rect {
-            height: 1,
-            ..f.size()
-        };
-
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(para.len() as u16),
-                Constraint::Length(1),
-                Constraint::Length(pause.len() as u16),
-            ])
-            .split(row);
-
-        let progress = Paragraph::new(para);
-        let pause = Paragraph::new(pause)
-            .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
-
-        if let [l, _, r] = *layout {
-            f.render_widget(progress, l);
-            f.render_widget(pause, r);
-        }
-
-    }
-
-    fn draw_update_mode<B: Backend>(f: &mut Frame<B>, input: &str) {
-        let row = Rect {
-            height: 1,
-            ..f.size()
-        };
-        let message = "enter a new rate:";
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Length(message.len() as u16),
-                    Constraint::Length(1),
-                    Constraint::Min(10),
-                ]
-            )
-            .split(row);
-        let para = Paragraph::new(message)
-            .style(
-                Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-            );
-        let input_length = input.len() as u16;
-        let input = Paragraph::new(input)
-            .style(Style::default().add_modifier(Modifier::BOLD));
-        if let [l, _, r] = *layout {
-            f.set_cursor(r.x + input_length, r.y);
-            f.render_widget(para, l);
-            f.render_widget(input, r);
-        }
-    }
-
-}
-
-fn abbreviate(unit: Unit) -> &'static str {
-    match unit {
-        Unit::Byte => "B",
-        Unit::Line => "L",
-        Unit::Null => "#",
-    }
-}
-
-fn format_duration(duration: Duration) -> String {
-    let duration = chrono::Duration::from_std(duration).unwrap();
-    format!(
-        "{}:{:02}:{:02}",
-        duration.num_hours(),
-        duration.num_minutes() % 60,
-        duration.num_seconds() % 60,
-    )
 }
 
 impl Drop for UserInterface {
     fn drop(&mut self) {
         Cleanup();
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ProgressView {
-    start_time: Instant,
-    progress: TransferProgress,
-}
-
-impl ProgressView {
-    fn elapsed(&self) -> Duration {
-        self.start_time.elapsed()
     }
 }
