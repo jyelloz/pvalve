@@ -16,9 +16,7 @@ thiserror = "1"
 size_format = "1"
 watch = "0.2"
 sum-queue = "1.0"
+governor = "0.4"
 [dependencies.clap]
 version = "3"
 features = ["derive"]
-[dependencies.governor]
-version = "0.3"
-features = []
