@@ -53,6 +53,10 @@ fn main() -> anyhow::Result<()> {
         )?;
         Some(thread::spawn(|| ui.run(Instant::now())))
     } else {
+        eprintln!(
+            "!!! INTERACTIVE MODE DISABLED: \
+            either stdin or stdout is not a tty !!!"
+        );
         None
     };
     let copy_result = copy(&mut stdin.lock(), &mut stdout);
