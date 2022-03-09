@@ -1,6 +1,6 @@
 use watch::WatchReceiver;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
 pub struct TransferProgress {
     pub bytes_transferred: usize,
     pub lines_transferred: usize,
@@ -18,6 +18,17 @@ impl TransferProgress {
     }
     pub fn add_nulls(&mut self, n: usize) {
         self.nulls_transferred += n;
+    }
+}
+
+impl std::ops::Add for TransferProgress {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self {
+            bytes_transferred: self.bytes_transferred + other.bytes_transferred,
+            lines_transferred: self.lines_transferred + other.lines_transferred,
+            nulls_transferred: self.nulls_transferred + other.nulls_transferred,
+        }
     }
 }
 
