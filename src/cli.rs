@@ -39,6 +39,7 @@ pub struct Opts {
     speed_limit: Option<Speed>,
     #[clap(
         short = 'l',
+        long,
         help = "Measurements apply to line-separated records.",
     )]
     line_mode: bool,
