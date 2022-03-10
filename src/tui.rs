@@ -83,29 +83,21 @@ impl Iterator for Events {
 }
 
 fn checked_add(value: Option<NonZeroU32>, increment: u32) -> Option<NonZeroU32> {
-    if let Some(value) = value {
-        value
-            .get()
-            .checked_add(increment)
-            .map(|n| n - (n % increment))
-            .map(|n| 1.max(n))
-            .and_then(NonZeroU32::new)
-    } else {
-        None
-    }
+    value?.get()
+        .checked_add(increment)
+        .or(Some(0))
+        .map(|n| n - (n % increment))
+        .map(|n| 1.max(n))
+        .and_then(NonZeroU32::new)
 }
 
 fn checked_sub(value: Option<NonZeroU32>, increment: u32) -> Option<NonZeroU32> {
-    if let Some(value) = value {
-        value
-            .get()
-            .checked_sub(increment)
-            .map(|n| n - (n % increment))
-            .map(|n| 1.max(n))
-            .and_then(NonZeroU32::new)
-    } else {
-        None
-    }
+    value?.get()
+        .checked_sub(increment)
+        .or(Some(0))
+        .map(|n| n - (n % increment))
+        .map(|n| 1.max(n))
+        .and_then(NonZeroU32::new)
 }
 
 type CrossTerminal = Terminal<CrosstermBackend<File>>;
