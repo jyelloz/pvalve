@@ -35,6 +35,7 @@ use super::{
         KeyboardInput as _,
         EditRateView,
         EditRateState,
+        EditRateResponse,
         TransferProgressView,
     },
 };
@@ -207,10 +208,15 @@ impl UserInterface {
                     _ => {},
                 },
                 TuiMode::Edit => if let Event::Input(event) = event {
-                    if let Some(rate) = rate.input(event) {
-                        let rate: Option<NonZeroU32> = rate.into();
-                        self.set_limit(rate);
-                        mode = TuiMode::Progress;
+                    match rate.input(event) {
+                        Some(EditRateResponse::NewRate(rate)) => {
+                            self.set_limit(Some(rate));
+                            mode = TuiMode::Progress;
+                        },
+                        Some(_) => {
+                            mode = TuiMode::Progress;
+                        },
+                        _ => {},
                     }
                 },
             }
