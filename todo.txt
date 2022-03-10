@@ -10,7 +10,7 @@ x Add capability to measure recent stream throughput. +io +tui
 x Add full-screen progress monitor UI +tui
 x Add small speed increase/decrease keybindings +tui\n
 x Add pause/resume keybindings +tui
-Add edit mode for text entry speed adjustments +tui
+x Add edit mode for text entry speed adjustments +tui
 x Reduce number of backoff steps to reach 1 credit to a fixed number. +io (WONTFIX, max is only 32 for u32 integer).
 x Determine if buffering of I/O is done correctly. +io
 x Add an adjustable-bytes-speed Write wrapper. +io
