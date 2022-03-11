@@ -48,9 +48,11 @@ pub trait KeyboardInput {
     fn input(&mut self, event: Event) -> Option<Self::Response>;
 }
 
-pub struct ObservedRateView(pub TransferProgress, pub Unit);
+pub struct ObservedRateView(pub TransferProgress, pub Unit, Option<NonZeroU32>);
 
 impl ObservedRateView {
+    const RELATIVE_TOLERANCE: f32 = 0.1f32;
+    const ABSOLUTE_TOLERANCE: usize = 1;
     fn text_byte(progress: &TransferProgress) -> String {
         format!(
             "[{}B/s]",
@@ -69,17 +71,54 @@ impl ObservedRateView {
             SizeFormatterSI::new(progress.nulls_transferred as u64)
         )
     }
+    fn scalar_progress(&self) -> usize {
+        let Self(progress, unit, ..) = self;
+        match *unit {
+            Unit::Byte => progress.bytes_transferred,
+            Unit::Line => progress.lines_transferred,
+            Unit::Null => progress.nulls_transferred,
+        }
+    }
+    fn distance_from_limit(&self) -> Option<(bool, usize, f32)> {
+        let Self(_, _, limit) = self;
+        if let Some(limit) = limit.map(NonZeroU32::get) {
+            let scalar_progress = self.scalar_progress();
+            let exceeded = scalar_progress >= limit as usize;
+            let distance = ((limit as isize) - (scalar_progress as isize)).abs();
+            let relative = ((distance as f32) / (limit as f32)).abs();
+            Some((exceeded, distance as usize, relative))
+        } else {
+            None
+        }
+    }
+    fn saturated(&self) -> bool {
+        if let Some((exceeded, absolute, relative)) = self.distance_from_limit() {
+            exceeded
+            ||
+            absolute <= Self::ABSOLUTE_TOLERANCE
+            ||
+            relative <= Self::RELATIVE_TOLERANCE
+        } else {
+            false
+        }
+    }
 }
 
 impl Widget for ObservedRateView {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let ObservedRateView(progress, unit) = self;
+        let saturated = self.saturated();
+        let ObservedRateView(progress, unit, ..) = self;
         let text = match unit {
             Unit::Byte => Self::text_byte(&progress),
             Unit::Line => Self::text_line(&progress),
             Unit::Null => Self::text_null(&progress),
         };
-        let para = Paragraph::new(text);
+        let style = if saturated {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let para = Paragraph::new(text).style(style);
         para.render(area, buf);
     }
 }
@@ -228,50 +267,9 @@ fn format_duration(duration: &Duration) -> String {
 }
 
 #[derive(Clone, Copy)]
-struct RestrictedTransferProgress(CumulativeTransferProgress, NonZeroU32, Unit);
+struct AbsoluteTransferProgress(CumulativeTransferProgress, Unit);
 
-impl std::fmt::Display for RestrictedTransferProgress {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self(progress, limit, unit) = *self;
-        let bytes_transferred = progress.progress.bytes_transferred as u64;
-        let unit_abbreviation = abbreviate(unit);
-        let duration = format_duration(&progress.elapsed());
-        let limit = limit.get() as u64;
-        match unit {
-            Unit::Byte => write!(
-                fmt,
-                "{:.2}B {} [{:.2}{unit}/s]",
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterBinary::new(limit),
-                unit=unit_abbreviation,
-            ),
-            Unit::Line => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
-                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterSI::new(limit),
-                unit=unit_abbreviation,
-            ),
-            Unit::Null => write!(
-                fmt,
-                "{:.2}{unit} ({}B) {} [{:.2}{unit}/s]",
-                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
-                SizeFormatterBinary::new(bytes_transferred),
-                duration,
-                SizeFormatterSI::new(limit),
-                unit=unit_abbreviation,
-            ),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct UnrestrictedTransferProgress(CumulativeTransferProgress, Unit);
-
-impl std::fmt::Display for UnrestrictedTransferProgress {
+impl std::fmt::Display for AbsoluteTransferProgress {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self(progress, unit) = *self;
         let bytes_transferred = SizeFormatterBinary::new(
@@ -279,6 +277,7 @@ impl std::fmt::Display for UnrestrictedTransferProgress {
         );
         let unit_abbreviation = abbreviate(unit);
         let duration = format_duration(&progress.elapsed());
+        let CumulativeTransferProgress { progress, .. } = progress;
         match unit {
             Unit::Byte => write!(
                 fmt,
@@ -290,7 +289,7 @@ impl std::fmt::Display for UnrestrictedTransferProgress {
             Unit::Line => write!(
                 fmt,
                 "{:.2}{unit} ({}B) {}",
-                SizeFormatterSI::new(progress.progress.lines_transferred as u64),
+                SizeFormatterSI::new(progress.lines_transferred as u64),
                 bytes_transferred,
                 duration,
                 unit=unit_abbreviation,
@@ -298,7 +297,7 @@ impl std::fmt::Display for UnrestrictedTransferProgress {
             Unit::Null => write!(
                 fmt,
                 "{:.2}{unit} ({}B) {}",
-                SizeFormatterSI::new(progress.progress.nulls_transferred as u64),
+                SizeFormatterSI::new(progress.nulls_transferred as u64),
                 bytes_transferred,
                 duration,
                 unit=unit_abbreviation,
@@ -320,11 +319,7 @@ impl InteractiveWidget for TransferProgressView {
         let Self { paused, limit, unit, cumulative, instantaneous } = self;
         let pause = if paused { "[PAUSED]" } else { "" };
 
-        let para = if let Some(limit) = limit {
-            format!("{}", RestrictedTransferProgress(cumulative, limit, unit))
-        } else {
-            format!("{}", UnrestrictedTransferProgress(cumulative, unit))
-        };
+        let para = format!("{}", AbsoluteTransferProgress(cumulative, unit));
 
         let row = Rect {
             height: 1,
@@ -342,13 +337,13 @@ impl InteractiveWidget for TransferProgressView {
             .split(row);
 
         let progress = Paragraph::new(para);
-        let speed = ObservedRateView(instantaneous, unit);
+        let speed = ObservedRateView(instantaneous, unit, limit);
         let pause = Paragraph::new(pause)
             .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
 
         if let [l, pad, c, r] = *layout {
             frame.render_widget(progress, l);
-            frame.render_widget(Paragraph::new("-"), pad);
+            frame.render_widget(Paragraph::new(" "), pad);
             frame.render_widget(speed, c);
             frame.render_widget(pause, r);
         }
