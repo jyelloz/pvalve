@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 
 use clap::{AppSettings, Parser};
 
-use super::config::Unit;
+use super::unit::Unit;
 
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Speed(pub NonZeroU32);
