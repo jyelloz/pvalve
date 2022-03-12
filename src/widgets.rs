@@ -33,7 +33,7 @@ use size_format::{
     SizeFormatterSI,
 };
 
-use super::config::Unit;
+use super::unit::Unit;
 use super::progress::{
     CumulativeTransferProgress,
     TransferProgress,
