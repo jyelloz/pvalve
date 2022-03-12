@@ -11,8 +11,6 @@ pub struct TransferProgress {
     pub nulls_transferred: usize,
 }
 
-pub struct TransferProgressMonitor(WatchReceiver<TransferProgress>);
-
 impl TransferProgress {
     pub fn add_bytes(&mut self, n: usize) {
         self.bytes_transferred += n;
@@ -51,6 +49,8 @@ impl std::iter::Sum for TransferProgress {
         iter.fold(Self::default(), |a, b| a + b)
     }
 }
+
+pub struct TransferProgressMonitor(WatchReceiver<TransferProgress>);
 
 impl TransferProgressMonitor {
     pub fn new(rx: WatchReceiver<TransferProgress>) -> Self {
