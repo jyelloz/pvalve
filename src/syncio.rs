@@ -34,10 +34,10 @@ use crate::{
         TransferProgress,
         TransferProgressMonitor,
     },
+    unit::Unit,
     config::{
         ConfigMonitor,
         LatchMonitor,
-        Unit,
     },
     instantaneous::InstantaneousProgressWriter,
 };
