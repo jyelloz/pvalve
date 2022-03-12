@@ -36,6 +36,22 @@ impl std::ops::Add for TransferProgress {
     }
 }
 
+impl std::ops::Div<usize> for TransferProgress {
+    type Output = Self;
+    fn div(mut self, rhs: usize) -> Self::Output {
+        self.bytes_transferred /= rhs;
+        self.lines_transferred /= rhs;
+        self.nulls_transferred /= rhs;
+        self
+    }
+}
+
+impl std::iter::Sum for TransferProgress {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
 impl TransferProgressMonitor {
     pub fn new(rx: WatchReceiver<TransferProgress>) -> Self {
         Self(rx)
