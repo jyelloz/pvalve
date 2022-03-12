@@ -8,6 +8,8 @@ use watch::{
     channel,
 };
 
+use super::unit::Unit;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SpeedLimit {
     limit: NonZeroU32,
@@ -20,13 +22,6 @@ pub struct Config {
     pub unit: Unit,
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-pub enum Unit {
-    Byte,
-    Line,
-    Null,
-}
-
 #[derive(Clone)]
 pub struct ConfigMonitor(WatchReceiver<Config>);
 
@@ -37,22 +32,6 @@ pub struct Latch {
 }
 #[derive(Clone)]
 pub struct LatchMonitor(WatchReceiver<bool>);
-
-impl Default for Unit {
-    fn default() -> Self {
-        Self::Byte
-    }
-}
-
-impl Unit {
-    pub fn cycle(&mut self) {
-        *self = match self {
-            Self::Byte => Self::Line,
-            Self::Line => Self::Null,
-            Self::Null => Self::Byte,
-        }
-    }
-}
 
 impl Default for SpeedLimit {
     fn default() -> Self {
