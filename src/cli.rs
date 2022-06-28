@@ -1,4 +1,7 @@
-use std::num::NonZeroU32;
+use std::num::{
+    NonZeroU32,
+    NonZeroUsize,
+};
 
 use clap::{AppSettings, Parser};
 
@@ -25,6 +28,7 @@ impl Into<NonZeroU32> for &Speed {
 pub struct Invocation {
     pub speed: Option<Speed>,
     pub unit: Unit,
+    pub expected_size: Option<NonZeroUsize>,
 }
 
 /// Pipe Valve - Monitor and control pipe throughput.
@@ -49,6 +53,12 @@ pub struct Opts {
         help = "Measurements apply to null-separated records.",
     )]
     null_mode: bool,
+    #[clap(
+        short = 's',
+        long = "expected-size",
+        help = "Expected size of input stream in bytes.",
+    )]
+    expected_size: Option<NonZeroUsize>,
 }
 
 impl Opts {
@@ -73,8 +83,12 @@ impl From<&Opts> for Unit {
 impl From<Opts> for Invocation {
     fn from(opts: Opts) -> Self {
         let unit = Unit::from(&opts);
-        let speed = opts.speed_limit;
-        Self { unit, speed }
+        let Opts {
+            speed_limit: speed,
+            expected_size,
+            ..
+        } = opts;
+        Self { unit, speed, expected_size }
     }
 }
 
@@ -124,4 +138,26 @@ mod tests {
         assert_eq!(unit, Unit::Null);
         Ok(())
     }
+
+    #[test]
+    fn when__no_expected_size_supplied__then__none_is_used() -> Result {
+        let Invocation { expected_size, .. } = parse(&[])?;
+        assert_eq!(expected_size, None);
+        Ok(())
+    }
+
+    #[test]
+    fn when__valid_expected_size_supplied__then__supplied_value_is_used() -> Result {
+        let Invocation { expected_size, .. } = parse(&["-s", "123"])?;
+        assert_eq!(expected_size, Some(nonzero_ext::nonzero!(123usize)));
+        Ok(())
+    }
+
+    #[test]
+    fn when__zero_expected_size_supplied__then__parse_fails() -> Result {
+        parse(&["-s", "0"])
+            .expect_err("parse should have failed");
+        Ok(())
+    }
+
 }
