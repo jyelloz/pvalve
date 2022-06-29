@@ -21,8 +21,9 @@ fn main() -> anyhow::Result<()> {
 
     let limit = invo.speed.map(|s| s.0).into();
     let unit = invo.unit;
+    let expected_size = invo.expected_size;
 
-    let config = Config { limit, unit };
+    let config = Config { limit, unit, expected_size };
 
     let (config_tx, config_rx) = ConfigMonitor::new(config);
 
