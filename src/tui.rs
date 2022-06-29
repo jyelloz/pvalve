@@ -289,6 +289,7 @@ impl UserInterface {
                 paused,
                 unit: config.unit,
                 limit: config.limit(),
+                expected_size: config.expected_size,
                 cumulative,
                 instantaneous,
             }.render(frame),
