@@ -1,5 +1,5 @@
 use std::time::Duration;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 use tui::{
     Frame,
@@ -18,6 +18,7 @@ use tui::{
     },
     widgets::{
         Widget,
+        Gauge,
         Paragraph,
     },
 };
@@ -311,45 +312,91 @@ impl std::fmt::Display for AbsoluteTransferProgress {
 }
 
 pub struct TransferProgressView {
-    pub paused: bool,
-    pub limit: Option<NonZeroU32>,
-    pub unit: Unit,
     pub cumulative: CumulativeTransferProgress,
+    pub expected_size: Option<NonZeroUsize>,
     pub instantaneous: TransferProgress,
+    pub limit: Option<NonZeroU32>,
+    pub paused: bool,
+    pub unit: Unit,
 }
 
 impl InteractiveWidget for TransferProgressView {
     fn render<B: Backend>(self, frame: &mut Frame<B>) {
-        let Self { paused, limit, unit, cumulative, instantaneous } = self;
-        let pause = if paused { "[PAUSED]" } else { "" };
+        let Self {
+            cumulative,
+            expected_size,
+            instantaneous,
+            limit,
+            paused,
+            unit,
+        } = self;
 
-        let para = format!("{}", AbsoluteTransferProgress(cumulative, unit));
+        let pause = if paused { "[PAUSED]" } else { "" };
+        let pause_len = pause.len() as u16;
 
         let row = Rect {
             height: 1,
             ..frame.size()
         };
 
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(para.len() as u16),
-                Constraint::Max(1),
-                Constraint::Length(10),
-                Constraint::Length(pause.len() as u16),
-            ])
-            .split(row);
+        let progress = format!("{}", AbsoluteTransferProgress(cumulative, unit));
+        let progress_len = progress.len() as u16;
 
-        let progress = Paragraph::new(para);
         let speed = ObservedRateView(instantaneous, unit, limit);
         let pause = Paragraph::new(pause)
             .style(Style::default().add_modifier(Modifier::RAPID_BLINK));
 
-        if let [l, pad, c, r] = *layout {
-            frame.render_widget(progress, l);
-            frame.render_widget(Paragraph::new(" "), pad);
-            frame.render_widget(speed, c);
-            frame.render_widget(pause, r);
+        if let Some(expected_size) = expected_size {
+            let ratio = f64::min(
+                1f64,
+                cumulative.progress.bytes_transferred as f64 / (expected_size.get() as
+                f64)
+            ) as f64;
+            let percentage = (ratio * 100f64) as u16;
+            let label = format!(
+                "{} {}% {}",
+                progress,
+                percentage,
+                speed.as_text(),
+            );
+            let gauge = Gauge::default()
+                .gauge_style(Style::default().fg(Color::White).bg(Color::Black))
+                .label(label)
+                .use_unicode(true)
+                .ratio(ratio);
+
+            let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Max(64),
+                    Constraint::Length(1),
+                    Constraint::Length(pause_len as u16),
+                ])
+                .split(row);
+
+                if let [l, pad, r] = *layout {
+                    frame.render_widget(gauge, l);
+                    frame.render_widget(Paragraph::new(" "), pad);
+                    frame.render_widget(pause, r);
+                }
+        } else {
+            let progress = Paragraph::new(progress);
+            let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(progress_len as u16),
+                    Constraint::Max(1),
+                    Constraint::Length(10),
+                    Constraint::Length(pause_len as u16),
+                ])
+                .split(row);
+
+                if let [l, pad, c, r] = *layout {
+                    frame.render_widget(progress, l);
+                    frame.render_widget(Paragraph::new(" "), pad);
+                    frame.render_widget(speed, c);
+                    frame.render_widget(pause, r);
+                }
         }
     }
 }
