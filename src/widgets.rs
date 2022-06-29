@@ -102,17 +102,21 @@ impl ObservedRateView {
             false
         }
     }
+
+    pub fn as_text(&self) -> String {
+        let ObservedRateView(progress, unit, ..) = self;
+        match unit {
+            Unit::Byte => Self::text_byte(&progress),
+            Unit::Line => Self::text_line(&progress),
+            Unit::Null => Self::text_null(&progress),
+        }
+    }
 }
 
 impl Widget for ObservedRateView {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let saturated = self.saturated();
-        let ObservedRateView(progress, unit, ..) = self;
-        let text = match unit {
-            Unit::Byte => Self::text_byte(&progress),
-            Unit::Line => Self::text_line(&progress),
-            Unit::Null => Self::text_null(&progress),
-        };
+        let text = self.as_text();
         let style = if saturated {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
