@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 use nonzero_ext::nonzero;
 
@@ -20,6 +20,7 @@ pub struct SpeedLimit {
 pub struct Config {
     pub limit: SpeedLimit,
     pub unit: Unit,
+    pub expected_size: Option<NonZeroUsize>,
 }
 
 #[derive(Clone)]
