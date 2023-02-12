@@ -3,7 +3,7 @@ use std::num::{
     NonZeroUsize,
 };
 
-use clap::{AppSettings, Parser};
+use clap::Parser;
 
 use super::unit::Unit;
 
@@ -34,7 +34,6 @@ pub struct Invocation {
 /// Pipe Valve - Monitor and control pipe throughput.
 #[derive(Debug, Default, Clone, Copy, Parser)]
 #[clap(version)]
-#[clap(global_setting(AppSettings::DeriveDisplayOrder))]
 pub struct Opts {
     #[clap(
         short = 'L',
