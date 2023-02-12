@@ -201,6 +201,7 @@ impl UserInterface {
                     Event::Input(InputEvent::Key(KeyEvent {
                         code: KeyCode::Char('c'),
                         modifiers: KeyModifiers::CONTROL,
+                        ..
                     })) => {
                         self.aborted.on();
                         break;
