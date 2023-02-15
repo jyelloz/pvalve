@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::time::Duration;
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -107,9 +108,9 @@ impl ObservedRateView {
     pub fn as_text(&self) -> String {
         let ObservedRateView(progress, unit, ..) = self;
         match unit {
-            Unit::Byte => Self::text_byte(&progress),
-            Unit::Line => Self::text_line(&progress),
-            Unit::Null => Self::text_null(&progress),
+            Unit::Byte => Self::text_byte(progress),
+            Unit::Line => Self::text_line(progress),
+            Unit::Null => Self::text_null(progress),
         }
     }
 }
@@ -150,7 +151,16 @@ impl EditRateState {
     pub fn new() -> Self {
         Self(String::new())
     }
-    pub fn borrow(&self) -> &str {
+}
+
+impl Default for EditRateState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Borrow<str> for EditRateState {
+    fn borrow(&self) -> &str {
         &self.0
     }
 }
@@ -166,9 +176,9 @@ impl From<NonZeroU32> for EditRateResponse {
     }
 }
 
-impl Into<Option<NonZeroU32>> for EditRateResponse {
-    fn into(self) -> Option<NonZeroU32> {
-        if let Self::NewRate(rate) = self {
+impl From<&EditRateResponse> for Option<NonZeroU32> {
+    fn from(val: &EditRateResponse) -> Self {
+        if let EditRateResponse::NewRate(rate) = *val {
             Some(rate)
         } else {
             None
@@ -206,7 +216,7 @@ impl KeyboardInput for EditRateState {
                 code: KeyCode::Enter,
                 ..
             }) => {
-                let rate = u32::from_str_radix(&input, 10)
+                let rate = input.parse::<u32>()
                     .ok()
                     .and_then(NonZeroU32::new)
                     .map(Self::Response::from);
@@ -351,7 +361,7 @@ impl InteractiveWidget for TransferProgressView {
                 1f64,
                 cumulative.progress.bytes_transferred as f64 / (expected_size.get() as
                 f64)
-            ) as f64;
+            );
             let percentage = (ratio * 100f64) as u16;
             let label = format!(
                 "{} {}% {}",
@@ -370,7 +380,7 @@ impl InteractiveWidget for TransferProgressView {
                 .constraints([
                     Constraint::Max(64),
                     Constraint::Length(1),
-                    Constraint::Length(pause_len as u16),
+                    Constraint::Length(pause_len),
                 ])
                 .split(row);
 
@@ -384,10 +394,10 @@ impl InteractiveWidget for TransferProgressView {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Length(progress_len as u16),
+                    Constraint::Length(progress_len),
                     Constraint::Max(1),
                     Constraint::Length(10),
-                    Constraint::Length(pause_len as u16),
+                    Constraint::Length(pause_len),
                 ])
                 .split(row);
 
