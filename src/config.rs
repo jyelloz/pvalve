@@ -132,6 +132,12 @@ impl Latch {
     }
 }
 
+impl Default for Latch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LatchMonitor {
     pub fn active(&mut self) -> bool {
         self.0.get()
