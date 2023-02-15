@@ -176,7 +176,7 @@ impl RateLimiter for DynamicRateLimiter {
 impl <W> RateLimitedWriter<W, DynamicRateLimiter> {
 
     pub fn writer_with_config(writer: W, mut config: ConfigMonitor) -> Self {
-        let rate_limiter = DynamicRateLimiter::new(config.limit().into());
+        let rate_limiter = DynamicRateLimiter::new(config.limit());
         Self {
             inner: writer,
             rate_limiter,
