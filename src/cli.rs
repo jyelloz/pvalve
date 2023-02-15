@@ -14,13 +14,13 @@ impl std::str::FromStr for Speed {
     type Err = std::num::ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        NonZeroU32::from_str(s).map(|i| Self(i))
+        NonZeroU32::from_str(s).map(Self)
     }
 }
 
-impl Into<NonZeroU32> for &Speed {
-    fn into(self) -> NonZeroU32 {
-        self.0
+impl From<&Speed> for NonZeroU32 {
+    fn from(val: &Speed) -> Self {
+        val.0
     }
 }
 
