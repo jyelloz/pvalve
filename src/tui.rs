@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     fs::{File, OpenOptions},
     io, iter,
     num::NonZeroU32,
