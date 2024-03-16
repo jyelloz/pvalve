@@ -4,7 +4,6 @@ use std::num::{NonZeroU32, NonZeroUsize};
 
 use tui::{
     Frame,
-    backend::Backend,
     buffer::Buffer,
     layout::{
         Rect,
@@ -42,7 +41,7 @@ use super::progress::{
 };
 
 pub trait InteractiveWidget: Sized {
-    fn render<B: Backend>(self, frame: &mut Frame<B>);
+    fn render(self, frame: &mut Frame);
 }
 
 pub trait KeyboardInput {
@@ -231,7 +230,7 @@ impl KeyboardInput for EditRateState {
 pub struct EditRateView<'a>(pub &'a str);
 
 impl <'a> InteractiveWidget for EditRateView<'a> {
-    fn render<B: Backend>(self, frame: &mut Frame<B>) {
+    fn render(self, frame: &mut Frame) {
         let Self(input) = self;
         let row = Rect {
             height: 1,
@@ -331,7 +330,7 @@ pub struct TransferProgressView {
 }
 
 impl InteractiveWidget for TransferProgressView {
-    fn render<B: Backend>(self, frame: &mut Frame<B>) {
+    fn render(self, frame: &mut Frame) {
         let Self {
             cumulative,
             expected_size,

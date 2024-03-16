@@ -10,7 +10,7 @@ use std::{
 };
 
 use tui::{
-    backend::{Backend, CrosstermBackend},
+    backend::CrosstermBackend,
     Frame,
     Terminal,
 };
@@ -277,8 +277,8 @@ impl UserInterface {
         self.config_tx.send(self.config);
     }
 
-    fn draw<B: Backend>(
-        frame: &mut Frame<B>,
+    fn draw(
+        frame: &mut Frame,
         mode: TuiMode,
         config: Config,
         paused: bool,
